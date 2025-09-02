@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -275,15 +277,17 @@ func BenchmarkExifToolPersistent(b *testing.B) {
 	testFile := filepath.Join(tmpDir, "test.txt")
 	os.WriteFile(testFile, []byte("test content"), 0644)
 
-	etm, err := NewExifToolManager()
+	etm, err := NewExifToolManager(1) // Single worker for benchmark
 	if err != nil {
 		b.Fatalf("Failed to create ExifTool manager: %v", err)
 	}
 	defer etm.Close()
 
+	process := etm.GetProcessForWorker(0)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		etm.GetMetadata(testFile)
+		process.GetMetadata(testFile)
 	}
 }
 
@@ -419,7 +423,7 @@ func TestExifToolPersistentMode(t *testing.T) {
 		t.Skip("ExifTool not available, skipping persistent mode test")
 	}
 
-	etm, err := NewExifToolManager()
+	etm, err := NewExifToolManager(2) // Create manager with 2 workers
 	if err != nil {
 		t.Fatalf("Failed to create ExifTool manager: %v", err)
 	}
@@ -433,17 +437,87 @@ func TestExifToolPersistentMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Test multiple calls to ensure persistent mode is working
-	for i := 0; i < 3; i++ {
-		metadata, err := etm.GetMetadata(testFile)
-		if err != nil {
-			t.Fatalf("Failed to get metadata on iteration %d: %v", i, err)
-		}
+	// Test both worker processes
+	for workerID := 0; workerID < 2; workerID++ {
+		process := etm.GetProcessForWorker(workerID)
 
-		// Should at least have FileName
-		if filename, exists := metadata["FileName"]; !exists || filename != "test.txt" {
-			t.Errorf("Expected FileName 'test.txt', got '%s'", filename)
+		// Test multiple calls to ensure persistent mode is working
+		for i := 0; i < 3; i++ {
+			metadata, err := process.GetMetadata(testFile)
+			if err != nil {
+				t.Fatalf("Worker %d failed to get metadata on iteration %d: %v", workerID, i, err)
+			}
+
+			// Should at least have FileName
+			if filename, exists := metadata["FileName"]; !exists || filename != "test.txt" {
+				t.Errorf("Worker %d expected FileName 'test.txt', got '%s'", workerID, filename)
+			}
 		}
+	}
+}
+
+func TestExifToolConcurrency(t *testing.T) {
+	// Skip if exiftool is not available
+	if _, err := exec.LookPath("exiftool"); err != nil {
+		t.Skip("ExifTool not available, skipping concurrency test")
+	}
+
+	workerCount := 4
+	etm, err := NewExifToolManager(workerCount)
+	if err != nil {
+		t.Fatalf("Failed to create ExifTool manager: %v", err)
+	}
+	defer etm.Close()
+
+	// Create test files
+	tmpDir := t.TempDir()
+	testFiles := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		testFile := filepath.Join(tmpDir, fmt.Sprintf("test%d.txt", i))
+		err := os.WriteFile(testFile, []byte(fmt.Sprintf("test content %d", i)), 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		testFiles[i] = testFile
+	}
+
+	// Test concurrent access to different ExifTool processes
+	var wg sync.WaitGroup
+	results := make(chan error, workerCount*len(testFiles))
+
+	for workerID := 0; workerID < workerCount; workerID++ {
+		wg.Add(1)
+		go func(wID int) {
+			defer wg.Done()
+			process := etm.GetProcessForWorker(wID)
+
+			// Each worker processes all files with its dedicated ExifTool process
+			for _, file := range testFiles {
+				_, err := process.GetMetadata(file)
+				if err != nil {
+					results <- fmt.Errorf("worker %d failed on %s: %v", wID, file, err)
+					return
+				}
+			}
+			results <- nil // Success
+		}(workerID)
+	}
+
+	wg.Wait()
+	close(results)
+
+	// Check results
+	successCount := 0
+	for result := range results {
+		if result != nil {
+			t.Errorf("Concurrent test failed: %v", result)
+		} else {
+			successCount++
+		}
+	}
+
+	if successCount != workerCount {
+		t.Errorf("Expected %d successful workers, got %d", workerCount, successCount)
 	}
 }
 

@@ -50,13 +50,18 @@ type AlbumMetadata struct {
 	Title string `json:"title"`
 }
 
-// ExifToolManager manages a persistent ExifTool process
-type ExifToolManager struct {
+// ExifToolProcess represents a single persistent ExifTool process
+type ExifToolProcess struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	stdout  io.ReadCloser
 	scanner *bufio.Scanner
 	mu      sync.Mutex
+}
+
+// ExifToolManager manages multiple ExifTool processes (one per worker)
+type ExifToolManager struct {
+	processes []*ExifToolProcess
 }
 
 // Job represents a work item for the worker pool
@@ -108,8 +113,8 @@ func main() {
 	fmt.Printf("  Dry run: %t\n", config.DryRun)
 	fmt.Printf("  Workers: %d\n\n", config.Workers)
 
-	// Initialize ExifTool in persistent mode
-	exifTool, err := NewExifToolManager()
+	// Initialize ExifTool manager with one process per worker
+	exifTool, err := NewExifToolManager(config.Workers)
 	if err != nil {
 		log.Fatal("Failed to initialize ExifTool:", err)
 	}
@@ -241,7 +246,7 @@ func processFiles(config *Config, exifTool *ExifToolManager, mediaFiles []MediaF
 	var wg sync.WaitGroup
 	for i := 0; i < config.Workers; i++ {
 		wg.Add(1)
-		go worker(config, exifTool, jobs, results, &wg)
+		go worker(i, config, exifTool, jobs, results, &wg)
 	}
 
 	// Send jobs
@@ -276,16 +281,19 @@ func processFiles(config *Config, exifTool *ExifToolManager, mediaFiles []MediaF
 	return allResults
 }
 
-func worker(config *Config, exifTool *ExifToolManager, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
+func worker(workerID int, config *Config, exifTool *ExifToolManager, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	// Get dedicated ExifTool process for this worker
+	process := exifTool.GetProcessForWorker(workerID)
+
 	for job := range jobs {
-		result := processMediaFile(config, exifTool, job.File)
+		result := processMediaFile(config, process, job.File)
 		results <- result
 	}
 }
 
-func processMediaFile(config *Config, exifTool *ExifToolManager, file MediaFile) Result {
+func processMediaFile(config *Config, exifTool *ExifToolProcess, file MediaFile) Result {
 	result := Result{File: file}
 
 	// Extract existing EXIF metadata
@@ -446,7 +454,7 @@ func parseExifDate(dateStr string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unable to parse date: %s", dateStr)
 }
 
-func updateExifDate(config *Config, exifTool *ExifToolManager, filePath string, date time.Time) error {
+func updateExifDate(config *Config, exifTool *ExifToolProcess, filePath string, date time.Time) error {
 	if config.DryRun {
 		return nil
 	}
@@ -550,13 +558,33 @@ func printSummary(results []Result) {
 	}
 }
 
-// NewExifToolManager creates a new ExifTool manager with persistent process
-func NewExifToolManager() (*ExifToolManager, error) {
+// NewExifToolManager creates a new ExifTool manager with one process per worker
+func NewExifToolManager(workerCount int) (*ExifToolManager, error) {
 	// Check if exiftool is available
 	if _, err := exec.LookPath("exiftool"); err != nil {
 		return nil, fmt.Errorf("exiftool not found in PATH: %v", err)
 	}
 
+	processes := make([]*ExifToolProcess, workerCount)
+	for i := 0; i < workerCount; i++ {
+		process, err := startExifToolProcess()
+		if err != nil {
+			// Clean up any processes that were already started
+			for j := 0; j < i; j++ {
+				processes[j].Close()
+			}
+			return nil, fmt.Errorf("failed to start ExifTool process %d: %v", i, err)
+		}
+		processes[i] = process
+	}
+
+	return &ExifToolManager{
+		processes: processes,
+	}, nil
+}
+
+// startExifToolProcess starts a single ExifTool process in persistent mode
+func startExifToolProcess() (*ExifToolProcess, error) {
 	// Start ExifTool in persistent mode with -stay_open
 	cmd := exec.Command("exiftool", "-stay_open", "True", "-@", "-")
 
@@ -579,7 +607,7 @@ func NewExifToolManager() (*ExifToolManager, error) {
 
 	scanner := bufio.NewScanner(stdout)
 
-	return &ExifToolManager{
+	return &ExifToolProcess{
 		cmd:     cmd,
 		stdin:   stdin,
 		stdout:  stdout,
@@ -587,22 +615,27 @@ func NewExifToolManager() (*ExifToolManager, error) {
 	}, nil
 }
 
+// GetProcessForWorker returns the ExifTool process assigned to a specific worker
+func (etm *ExifToolManager) GetProcessForWorker(workerID int) *ExifToolProcess {
+	return etm.processes[workerID]
+}
+
 // GetMetadata extracts metadata from a file using ExifTool
-func (etm *ExifToolManager) GetMetadata(filePath string) (map[string]string, error) {
-	etm.mu.Lock()
-	defer etm.mu.Unlock()
+func (etp *ExifToolProcess) GetMetadata(filePath string) (map[string]string, error) {
+	etp.mu.Lock()
+	defer etp.mu.Unlock()
 
 	// Send command to persistent ExifTool process
 	command := fmt.Sprintf("-json\n-dateFormat\n%%Y:%%m:%%d %%H:%%M:%%S\n%s\n-execute\n", filePath)
 
-	if _, err := etm.stdin.Write([]byte(command)); err != nil {
+	if _, err := etp.stdin.Write([]byte(command)); err != nil {
 		return nil, fmt.Errorf("failed to write to exiftool stdin: %v", err)
 	}
 
 	// Read response until we see {ready} marker
 	var output strings.Builder
-	for etm.scanner.Scan() {
-		line := etm.scanner.Text()
+	for etp.scanner.Scan() {
+		line := etp.scanner.Text()
 		if line == "{ready}" {
 			break
 		}
@@ -610,7 +643,7 @@ func (etm *ExifToolManager) GetMetadata(filePath string) (map[string]string, err
 		output.WriteString("\n")
 	}
 
-	if err := etm.scanner.Err(); err != nil {
+	if err := etp.scanner.Err(); err != nil {
 		return nil, fmt.Errorf("failed to read exiftool output: %v", err)
 	}
 
@@ -639,20 +672,20 @@ func (etm *ExifToolManager) GetMetadata(filePath string) (map[string]string, err
 }
 
 // UpdateAllDates updates all date fields in a file
-func (etm *ExifToolManager) UpdateAllDates(filePath, dateStr string) error {
-	etm.mu.Lock()
-	defer etm.mu.Unlock()
+func (etp *ExifToolProcess) UpdateAllDates(filePath, dateStr string) error {
+	etp.mu.Lock()
+	defer etp.mu.Unlock()
 
 	// Send update command to persistent ExifTool process
 	command := fmt.Sprintf("-overwrite_original\n-AllDates=%s\n%s\n-execute\n", dateStr, filePath)
 
-	if _, err := etm.stdin.Write([]byte(command)); err != nil {
+	if _, err := etp.stdin.Write([]byte(command)); err != nil {
 		return fmt.Errorf("failed to write to exiftool stdin: %v", err)
 	}
 
 	// Read response until we see {ready} marker
-	for etm.scanner.Scan() {
-		line := etm.scanner.Text()
+	for etp.scanner.Scan() {
+		line := etp.scanner.Text()
 		if line == "{ready}" {
 			break
 		}
@@ -662,33 +695,45 @@ func (etm *ExifToolManager) UpdateAllDates(filePath, dateStr string) error {
 		}
 	}
 
-	if err := etm.scanner.Err(); err != nil {
+	if err := etp.scanner.Err(); err != nil {
 		return fmt.Errorf("failed to read exiftool output: %v", err)
 	}
 
 	return nil
 }
 
-// Close cleans up the ExifTool manager
+// Close cleans up the ExifTool manager by closing all processes
 func (etm *ExifToolManager) Close() error {
-	etm.mu.Lock()
-	defer etm.mu.Unlock()
+	var lastErr error
+	for i, process := range etm.processes {
+		if err := process.Close(); err != nil {
+			log.Printf("Error closing ExifTool process %d: %v", i, err)
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+// Close cleans up a single ExifTool process
+func (etp *ExifToolProcess) Close() error {
+	etp.mu.Lock()
+	defer etp.mu.Unlock()
 
 	// Send -stay_open False to gracefully terminate ExifTool
-	if etm.stdin != nil {
-		etm.stdin.Write([]byte("-stay_open\nFalse\n"))
-		etm.stdin.Close()
+	if etp.stdin != nil {
+		etp.stdin.Write([]byte("-stay_open\nFalse\n"))
+		etp.stdin.Close()
 	}
 
-	if etm.stdout != nil {
-		etm.stdout.Close()
+	if etp.stdout != nil {
+		etp.stdout.Close()
 	}
 
-	if etm.cmd != nil && etm.cmd.Process != nil {
+	if etp.cmd != nil && etp.cmd.Process != nil {
 		// Wait for the process to exit gracefully, or kill it after a timeout
 		done := make(chan error, 1)
 		go func() {
-			done <- etm.cmd.Wait()
+			done <- etp.cmd.Wait()
 		}()
 
 		select {
@@ -696,7 +741,7 @@ func (etm *ExifToolManager) Close() error {
 			return err
 		case <-time.After(5 * time.Second):
 			// Force kill if it doesn't exit gracefully
-			return etm.cmd.Process.Kill()
+			return etp.cmd.Process.Kill()
 		}
 	}
 
