@@ -128,6 +128,7 @@ The tool features **enhanced sidecar file matching** that handles Google Photos'
 - `BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg` → `BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json`
 
 ### Advanced Edge Cases Handled
+- **'-edited' Suffix in Media Files**: If a media file contains `-edited` before the extension (e.g., `P0001064-edited.jpg`), the tool will correctly match to sidecar files for the original file (e.g., `P0001064.jpg.supplemental-metadata.json`)
 - **Trailing Underscore Removal**: Google Photos sometimes removes trailing underscores from filenames when creating sidecars
 - **Extension Dropping**: Some sidecars drop the file extension entirely (e.g., `name_.jpg` → `name.json`)
 - **Arbitrary Truncation**: Handles mid-word filename truncation (e.g., `DelgadoK` → `Delgado`)

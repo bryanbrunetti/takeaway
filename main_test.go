@@ -233,6 +233,31 @@ func TestFindSidecarFile(t *testing.T) {
 			},
 			expectedName: "25159_1382026223053_1003886514_1164687_6240_n..json",
 		},
+		// Tests for '-edited' suffix: should match sidecar for non-edited base name
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "IMG_123-edited.jpg"),
+				BaseName: "IMG_123-edited.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "IMG_123.jpg.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "blank-edited.jpg"),
+				BaseName: "blank-edited.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "blank.jpg.su.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "VeryLongFileNameThatGetsHeavilyTruncated-edited.jpg"),
+				BaseName: "VeryLongFileNameThatGetsHeavilyTruncated-edited.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "VeryLongFileNameThatGetsHeavilyTruncated.jpg.s.json",
+		},
 	}
 
 	for _, tt := range tests {
@@ -244,6 +269,20 @@ func TestFindSidecarFile(t *testing.T) {
 				t.Errorf("Expected sidecar path %s, got %s", expectedPath, sidecarPath)
 			}
 		})
+	}
+
+	// Explicitly create '-edited' files to ensure they exist for sidecar lookup
+	editedFiles := []string{
+		"IMG_123-edited.jpg",
+		"blank-edited.jpg",
+		"VeryLongFileNameThatGetsHeavilyTruncated-edited.jpg",
+	}
+	for _, name := range editedFiles {
+		path := filepath.Join(tmpDir, name)
+		err := os.WriteFile(path, []byte("media"), 0644)
+		if err != nil {
+			t.Fatalf("failed to create edited file %s: %v", name, err)
+		}
 	}
 }
 

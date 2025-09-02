@@ -381,6 +381,12 @@ func processMediaFile(config *Config, exifTool *ExifToolProcess, file MediaFile)
 func findSidecarFile(file MediaFile) string {
 	baseName := file.BaseName
 	baseNameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	baseForSidecarNoUnderscore := baseNameNoExt + filepath.Ext(baseName)
+
+	// Handle '-edited' suffix
+	if strings.HasSuffix(baseNameNoExt, "-edited") {
+		baseNameNoExt = strings.TrimSuffix(baseNameNoExt, "-edited")
+	}
 
 	// Handle files with (number) suffix
 	numberSuffixRegex := regexp.MustCompile(`^(.+)\((\d+)\)$`)
@@ -391,13 +397,13 @@ func findSidecarFile(file MediaFile) string {
 		baseForSidecar = matches[1] + filepath.Ext(baseName) // e.g., "IMG_456.jpg" from "IMG_456(1).jpg"
 		numberSuffix = `\(` + matches[2] + `\)`              // e.g., "\(1\)" for regex
 	} else {
-		baseForSidecar = baseName
+		baseForSidecar = baseNameNoExt + filepath.Ext(baseName)
 		numberSuffix = ""
 	}
 
 	// Handle trailing underscore removal edge case
 	// Google Photos sometimes removes trailing underscores from filenames when creating JSON sidecars
-	baseForSidecarNoUnderscore := baseForSidecar
+	baseForSidecarNoUnderscore = baseNameNoExt + filepath.Ext(baseName)
 	baseNameNoUnderscoreNoExt := ""
 
 	if strings.HasSuffix(strings.TrimSuffix(baseForSidecar, filepath.Ext(baseForSidecar)), "_") {
