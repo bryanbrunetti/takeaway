@@ -244,7 +244,10 @@ func initSupportedExtensions() error {
 			if ext != "" {
 				// Convert to lowercase and add dot prefix
 				normalizedExt := "." + strings.ToLower(ext)
-				supportedExts[normalizedExt] = true
+				// Skip JSON files as they are sidecar files, not media files
+				if normalizedExt != ".json" {
+					supportedExts[normalizedExt] = true
+				}
 			}
 		}
 	}

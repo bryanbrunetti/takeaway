@@ -467,6 +467,11 @@ func TestInitSupportedExtensions(t *testing.T) {
 	}
 
 	t.Logf("Loaded %d supported extensions from ExifTool", len(supportedExts))
+
+	// Verify that JSON files are excluded (they are sidecar files, not media files)
+	if supportedExts[".json"] {
+		t.Error("JSON files should not be included in supported extensions (they are sidecar files)")
+	}
 }
 
 func TestInitSupportedExtensionsFallback(t *testing.T) {
@@ -510,6 +515,11 @@ func TestInitSupportedExtensionsFallback(t *testing.T) {
 	}
 
 	t.Logf("Fallback loaded %d extensions", len(supportedExts))
+
+	// Verify that JSON files are excluded from fallback list too
+	if supportedExts[".json"] {
+		t.Error("JSON files should not be included in fallback supported extensions")
+	}
 }
 
 func TestGenerateDestinationPath(t *testing.T) {
@@ -605,10 +615,11 @@ func TestSupportedFileTypes(t *testing.T) {
 		{"image.png", true},
 		{"video.mp4", true},
 		{"video.MOV", true},
-		{"document.pdf", true}, // ExifTool supports PDF metadata
-		{"text.txt", true},     // ExifTool supports TXT files
-		{"archive.zip", true},  // ExifTool supports ZIP metadata
-		{"unknown.xyz", false}, // This extension shouldn't exist
+		{"document.pdf", true},  // ExifTool supports PDF metadata
+		{"text.txt", true},      // ExifTool supports TXT files
+		{"archive.zip", true},   // ExifTool supports ZIP metadata
+		{"sidecar.json", false}, // JSON files are sidecar files, not media files
+		{"unknown.xyz", false},  // This extension shouldn't exist
 	}
 
 	for _, tc := range testCases {
