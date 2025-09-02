@@ -289,7 +289,6 @@ func TestFindSidecarFile(t *testing.T) {
 	t.Run("literal_parenthesis_in_filename", func(t *testing.T) {
 		filename := "3x (1).jpg"
 		sidecar := "3x (1).jpg.supplemental-metadata.json"
-		// Create media file and sidecar in temp dir
 		mediaPath := filepath.Join(tmpDir, filename)
 		sidecarPath := filepath.Join(tmpDir, sidecar)
 		err := os.WriteFile(mediaPath, []byte("media"), 0644)
@@ -310,6 +309,33 @@ func TestFindSidecarFile(t *testing.T) {
 		found := findSidecarFile(mediaFile)
 		if found != sidecarPath {
 			t.Errorf("Expected literal parenthesis file to match sidecar %s, got %s", sidecarPath, found)
+		}
+	})
+
+	// Edge case: truncated extension in sidecar file (e.g. .jpeg => .j.json)
+	t.Run("truncated_extension_sidecar", func(t *testing.T) {
+		filename := "02574B20-038B-49E5-ABCB-F8DEF39EBEF1_1_102_o.jpeg"
+		sidecar := "02574B20-038B-49E5-ABCB-F8DEF39EBEF1_1_102_o.j.json"
+		mediaPath := filepath.Join(tmpDir, filename)
+		sidecarPath := filepath.Join(tmpDir, sidecar)
+		err := os.WriteFile(mediaPath, []byte("media"), 0644)
+		if err != nil {
+			t.Fatalf("failed to create media file: %v", err)
+		}
+		sidecarContent := `{"title": "02574B20-038B-49E5-ABCB-F8DEF39EBEF1_1_102_o.jpeg", "photoTakenTime": {"timestamp": "1672531200"}}`
+		err = os.WriteFile(sidecarPath, []byte(sidecarContent), 0644)
+		if err != nil {
+			t.Fatalf("failed to create truncated sidecar: %v", err)
+		}
+
+		mediaFile := MediaFile{
+			Path:     mediaPath,
+			BaseName: filename,
+			Dir:      tmpDir,
+		}
+		found := findSidecarFile(mediaFile)
+		if found != sidecarPath {
+			t.Errorf("Expected truncated extension file to match sidecar %s, got %s", sidecarPath, found)
 		}
 	})
 }

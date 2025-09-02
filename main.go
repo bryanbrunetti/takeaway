@@ -503,7 +503,30 @@ func findSidecarFile(file MediaFile) string {
 	}
 
 	// If no exact patterns match, try progressive prefix matching for arbitrary truncation
-	return findSidecarWithPrefixMatching(file, entries)
+	sidecar := findSidecarWithPrefixMatching(file, entries)
+	if sidecar != "" {
+		return sidecar
+	}
+
+	// --- Additional fallback: try matching where file extension is truncated before '.json' ---
+	ext := filepath.Ext(baseForSidecar)
+	base := strings.TrimSuffix(baseForSidecar, ext)
+	if len(ext) > 1 { // ".j" or longer
+		for i := 2; i <= len(ext); i++ {
+			trunc := ext[:i]
+			truncName := base + trunc
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasPrefix(entry.Name(), truncName) && strings.HasSuffix(entry.Name(), ".json") {
+					sidecarPath := filepath.Join(file.Dir, entry.Name())
+					if isGooglePhotosSidecar(sidecarPath) {
+						return sidecarPath
+					}
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 func findSidecarWithPrefixMatching(file MediaFile, entries []os.DirEntry) string {
