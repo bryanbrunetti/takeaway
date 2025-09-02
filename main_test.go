@@ -122,6 +122,8 @@ func TestFindSidecarFile(t *testing.T) {
 		"BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json",
 		"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg",
 		"BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json",
+		"25159_1382026223053_1003886514_1164687_6240_n.jpg",
+		"25159_1382026223053_1003886514_1164687_6240_n..json",
 	}
 
 	// Create Google Photos-style sidecar content
@@ -222,6 +224,14 @@ func TestFindSidecarFile(t *testing.T) {
 				Dir:      tmpDir,
 			},
 			expectedName: "BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "25159_1382026223053_1003886514_1164687_6240_n.jpg"),
+				BaseName: "25159_1382026223053_1003886514_1164687_6240_n.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "25159_1382026223053_1003886514_1164687_6240_n..json",
 		},
 	}
 
@@ -674,6 +684,7 @@ func BenchmarkSidecarMatchingRegex(b *testing.B) {
 		{"TrailingUnderscore_.jpg", "TrailingUnderscore.jpg.supplemental-metadata.json"},
 		{"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg", "BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json"},
 		{"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg", "BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json"},
+		{"25159_1382026223053_1003886514_1164687_6240_n.jpg", "25159_1382026223053_1003886514_1164687_6240_n..json"},
 	}
 
 	sidecarContent := `{"title": "test.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
@@ -815,5 +826,39 @@ func TestArbitraryTruncationEdgeCase(t *testing.T) {
 				t.Errorf("Expected arbitrary truncation case to find %s, got %s", expected, result)
 			}
 		})
+	}
+}
+
+func TestDoubleDotEdgeCase(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create the double-dot edge case example
+	mediaFile := "25159_1382026223053_1003886514_1164687_6240_n.jpg"
+	sidecarFile := "25159_1382026223053_1003886514_1164687_6240_n..json"
+
+	sidecarContent := `{"title": "25159_1382026223053_1003886514_1164687_6240_n.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
+
+	// Create files
+	err := os.WriteFile(filepath.Join(tmpDir, mediaFile), []byte("test image content"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(filepath.Join(tmpDir, sidecarFile), []byte(sidecarContent), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	file := MediaFile{
+		Path:     filepath.Join(tmpDir, mediaFile),
+		BaseName: mediaFile,
+		Dir:      tmpDir,
+	}
+
+	result := findSidecarFile(file)
+	expected := filepath.Join(tmpDir, sidecarFile)
+
+	if result != expected {
+		t.Errorf("Expected double-dot edge case to find %s, got %s", expected, result)
 	}
 }

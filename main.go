@@ -423,6 +423,10 @@ func findSidecarFile(file MediaFile) string {
 			// Pattern for base name without extension and underscore (e.g., "name_.jpg" -> "name.json")
 			patterns = append(patterns, fmt.Sprintf(`^%s%s\.json$`, escapedBaseNoUnderscoreNoExt, numberSuffix))
 		}
+		// Pattern for double-dot edge case (e.g., "name.jpg" -> "name..json")
+		baseNameNoExt := strings.TrimSuffix(baseForSidecar, filepath.Ext(baseForSidecar))
+		escapedBaseNoExt := regexp.QuoteMeta(baseNameNoExt)
+		patterns = append(patterns, fmt.Sprintf(`^%s\.%s\.json$`, escapedBaseNoExt, numberSuffix))
 	} else {
 		// Pattern with original filename
 		patterns = append(patterns, fmt.Sprintf(`^%s(?:\..*)?\.json$`, escapedBase))
@@ -432,6 +436,10 @@ func findSidecarFile(file MediaFile) string {
 			// Pattern for base name without extension and underscore (e.g., "name_.jpg" -> "name.json")
 			patterns = append(patterns, fmt.Sprintf(`^%s\.json$`, escapedBaseNoUnderscoreNoExt))
 		}
+		// Pattern for double-dot edge case (e.g., "name.jpg" -> "name..json")
+		baseNameNoExt := strings.TrimSuffix(baseForSidecar, filepath.Ext(baseForSidecar))
+		escapedBaseNoExt := regexp.QuoteMeta(baseNameNoExt)
+		patterns = append(patterns, fmt.Sprintf(`^%s\.\.json$`, escapedBaseNoExt))
 	}
 
 	// Read directory contents once
