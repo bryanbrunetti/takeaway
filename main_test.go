@@ -100,7 +100,7 @@ func TestParseExifDate(t *testing.T) {
 func TestFindSidecarFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create test files
+	// Create test files including heavily truncated patterns
 	testFiles := []string{
 		"IMG_123.jpg",
 		"IMG_123.jpg.json",
@@ -108,11 +108,24 @@ func TestFindSidecarFile(t *testing.T) {
 		"IMG_456.jpg.supplemental-metadata(1).json",
 		"blank.jpg",
 		"blank.jpg.su.json",
+		"Photo on 11-1-15 at 6.24 PM #3.jpg",
+		"Photo on 11-1-15 at 6.24 PM #3.jpg.supplementa.json",
+		"Bonanno1979BryanAndGrandpa45yrsOld_1.jpg",
+		"Bonanno1979BryanAndGrandpa45yrsOld_1.jpg.suppl.json",
+		"VeryLongFileNameThatGetsHeavilyTruncated.jpg",
+		"VeryLongFileNameThatGetsHeavilyTruncated.jpg.s.json",
 	}
+
+	// Create Google Photos-style sidecar content
+	sidecarContent := `{"title": "test.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
 
 	for _, filename := range testFiles {
 		path := filepath.Join(tmpDir, filename)
-		err := os.WriteFile(path, []byte("test"), 0644)
+		content := "test"
+		if strings.HasSuffix(filename, ".json") {
+			content = sidecarContent
+		}
+		err := os.WriteFile(path, []byte(content), 0644)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -145,6 +158,30 @@ func TestFindSidecarFile(t *testing.T) {
 				Dir:      tmpDir,
 			},
 			expectedName: "blank.jpg.su.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "Photo on 11-1-15 at 6.24 PM #3.jpg"),
+				BaseName: "Photo on 11-1-15 at 6.24 PM #3.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "Photo on 11-1-15 at 6.24 PM #3.jpg.supplementa.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "Bonanno1979BryanAndGrandpa45yrsOld_1.jpg"),
+				BaseName: "Bonanno1979BryanAndGrandpa45yrsOld_1.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "Bonanno1979BryanAndGrandpa45yrsOld_1.jpg.suppl.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "VeryLongFileNameThatGetsHeavilyTruncated.jpg"),
+				BaseName: "VeryLongFileNameThatGetsHeavilyTruncated.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "VeryLongFileNameThatGetsHeavilyTruncated.jpg.s.json",
 		},
 	}
 
@@ -518,6 +555,100 @@ func TestExifToolConcurrency(t *testing.T) {
 
 	if successCount != workerCount {
 		t.Errorf("Expected %d successful workers, got %d", workerCount, successCount)
+	}
+}
+
+func TestIsGooglePhotosSidecar(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Valid Google Photos sidecar
+	validSidecar := filepath.Join(tmpDir, "valid.json")
+	validContent := `{"title": "photo.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
+	os.WriteFile(validSidecar, []byte(validContent), 0644)
+
+	// Invalid JSON file (not a Google Photos sidecar)
+	invalidSidecar := filepath.Join(tmpDir, "invalid.json")
+	invalidContent := `{"some": "other", "json": "structure"}`
+	os.WriteFile(invalidSidecar, []byte(invalidContent), 0644)
+
+	// Test valid sidecar
+	if !isGooglePhotosSidecar(validSidecar) {
+		t.Error("Expected valid Google Photos sidecar to be recognized")
+	}
+
+	// Test invalid sidecar
+	if isGooglePhotosSidecar(invalidSidecar) {
+		t.Error("Expected invalid sidecar to be rejected")
+	}
+
+	// Test non-existent file
+	if isGooglePhotosSidecar(filepath.Join(tmpDir, "nonexistent.json")) {
+		t.Error("Expected non-existent file to be rejected")
+	}
+}
+
+func TestSidecarRegexMatching(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a media file and various potential sidecar files
+	mediaFile := "Some Very Long Photo Name That Gets Truncated.jpg"
+	os.WriteFile(filepath.Join(tmpDir, mediaFile), []byte("test image"), 0644)
+
+	// Create valid Google Photos sidecar with truncated name
+	sidecarContent := `{"title": "Some Very Long Photo Name That Gets Truncated.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
+	truncatedSidecar := "Some Very Long Photo Name That Gets Truncated.jpg.supplement.json"
+	os.WriteFile(filepath.Join(tmpDir, truncatedSidecar), []byte(sidecarContent), 0644)
+
+	// Create invalid JSON file that starts with same name
+	invalidJSON := "Some Very Long Photo Name That Gets Truncated.jpg.other.json"
+	os.WriteFile(filepath.Join(tmpDir, invalidJSON), []byte(`{"other": "data"}`), 0644)
+
+	file := MediaFile{
+		Path:     filepath.Join(tmpDir, mediaFile),
+		BaseName: mediaFile,
+		Dir:      tmpDir,
+	}
+
+	result := findSidecarFile(file)
+	expected := filepath.Join(tmpDir, truncatedSidecar)
+
+	if result != expected {
+		t.Errorf("Expected regex match to find %s, got %s", expected, result)
+	}
+}
+
+func BenchmarkSidecarMatchingRegex(b *testing.B) {
+	tmpDir := b.TempDir()
+
+	// Create test files with various truncation patterns
+	testCases := []struct {
+		media   string
+		sidecar string
+	}{
+		{"IMG_123.jpg", "IMG_123.jpg.supplemental-metadata.json"},
+		{"Photo on 11-1-15 at 6.24 PM #3.jpg", "Photo on 11-1-15 at 6.24 PM #3.jpg.supplementa.json"},
+		{"Bonanno1979BryanAndGrandpa45yrsOld_1.jpg", "Bonanno1979BryanAndGrandpa45yrsOld_1.jpg.suppl.json"},
+		{"VeryLongFileName.jpg", "VeryLongFileName.jpg.s.json"},
+		{"NumberedFile(1).jpg", "NumberedFile.jpg.supplemental-metadata(1).json"},
+	}
+
+	sidecarContent := `{"title": "test.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
+
+	for _, tc := range testCases {
+		os.WriteFile(filepath.Join(tmpDir, tc.media), []byte("test image"), 0644)
+		os.WriteFile(filepath.Join(tmpDir, tc.sidecar), []byte(sidecarContent), 0644)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, tc := range testCases {
+			file := MediaFile{
+				Path:     filepath.Join(tmpDir, tc.media),
+				BaseName: tc.media,
+				Dir:      tmpDir,
+			}
+			findSidecarFile(file)
+		}
 	}
 }
 

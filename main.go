@@ -381,40 +381,66 @@ func processMediaFile(config *Config, exifTool *ExifToolProcess, file MediaFile)
 func findSidecarFile(file MediaFile) string {
 	baseName := file.BaseName
 	baseNameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-	ext := filepath.Ext(baseName)
 
 	// Handle files with (number) suffix
 	numberSuffixRegex := regexp.MustCompile(`^(.+)\((\d+)\)$`)
-	var numberSuffix string
 	var baseForSidecar string
+	var numberSuffix string
 
 	if matches := numberSuffixRegex.FindStringSubmatch(baseNameNoExt); len(matches) == 3 {
-		baseForSidecar = matches[1] + ext     // e.g., "IMG_456.jpg" from "IMG_456(1).jpg"
-		numberSuffix = "(" + matches[2] + ")" // e.g., "(1)"
+		baseForSidecar = matches[1] + filepath.Ext(baseName) // e.g., "IMG_456.jpg" from "IMG_456(1).jpg"
+		numberSuffix = `\(` + matches[2] + `\)`              // e.g., "\(1\)" for regex
 	} else {
 		baseForSidecar = baseName
 		numberSuffix = ""
 	}
 
-	// Possible sidecar patterns
-	patterns := []string{
-		// Full supplemental-metadata name
-		fmt.Sprintf("%s.supplemental-metadata%s.json", baseForSidecar, numberSuffix),
-		// Truncated versions
-		fmt.Sprintf("%s.supplemental-meta%s.json", baseForSidecar, numberSuffix),
-		fmt.Sprintf("%s.su%s.json", baseForSidecar, numberSuffix),
-		// Simple .json
-		fmt.Sprintf("%s%s.json", baseForSidecar, numberSuffix),
+	// Create regex pattern for sidecar matching
+	// Matches: filename.json or filename.{any_chars}.json or filename.{any_chars}(number).json
+	escapedBase := regexp.QuoteMeta(baseForSidecar)
+	var pattern string
+	if numberSuffix != "" {
+		pattern = fmt.Sprintf(`^%s(?:\..*)?%s\.json$`, escapedBase, numberSuffix)
+	} else {
+		pattern = fmt.Sprintf(`^%s(?:\..*)?\.json$`, escapedBase)
 	}
 
-	for _, pattern := range patterns {
-		sidecarPath := filepath.Join(file.Dir, pattern)
-		if _, err := os.Stat(sidecarPath); err == nil {
-			return sidecarPath
+	sidecarRegex, err := regexp.Compile(pattern)
+	if err != nil {
+		return "" // Fallback to no sidecar if regex compilation fails
+	}
+
+	// Read directory contents once
+	entries, err := os.ReadDir(file.Dir)
+	if err != nil {
+		return ""
+	}
+
+	// Find matching JSON files
+	for _, entry := range entries {
+		if !entry.IsDir() && sidecarRegex.MatchString(entry.Name()) {
+			sidecarPath := filepath.Join(file.Dir, entry.Name())
+			// Verify it's actually a Google Photos sidecar by checking content
+			if isGooglePhotosSidecar(sidecarPath) {
+				return sidecarPath
+			}
 		}
 	}
 
 	return ""
+}
+
+func isGooglePhotosSidecar(filePath string) bool {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return false
+	}
+
+	// Quick check for Google Photos sidecar structure
+	content := string(data)
+	return strings.Contains(content, "photoTakenTime") &&
+		strings.Contains(content, "timestamp") &&
+		(strings.Contains(content, "title") || len(content) < 1000) // Basic validation
 }
 
 func parseSidecarDate(sidecarPath string) (time.Time, error) {
