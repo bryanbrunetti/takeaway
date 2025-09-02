@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -50,10 +52,11 @@ type AlbumMetadata struct {
 
 // ExifToolManager manages a persistent ExifTool process
 type ExifToolManager struct {
-	cmd    *exec.Cmd
-	stdin  *os.File
-	stdout *os.File
-	mu     sync.Mutex
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  io.ReadCloser
+	scanner *bufio.Scanner
+	mu      sync.Mutex
 }
 
 // Job represents a work item for the worker pool
@@ -554,7 +557,34 @@ func NewExifToolManager() (*ExifToolManager, error) {
 		return nil, fmt.Errorf("exiftool not found in PATH: %v", err)
 	}
 
-	return &ExifToolManager{}, nil
+	// Start ExifTool in persistent mode with -stay_open
+	cmd := exec.Command("exiftool", "-stay_open", "True", "-@", "-")
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdin pipe: %v", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		return nil, fmt.Errorf("failed to create stdout pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		return nil, fmt.Errorf("failed to start exiftool: %v", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+
+	return &ExifToolManager{
+		cmd:     cmd,
+		stdin:   stdin,
+		stdout:  stdout,
+		scanner: scanner,
+	}, nil
 }
 
 // GetMetadata extracts metadata from a file using ExifTool
@@ -562,14 +592,35 @@ func (etm *ExifToolManager) GetMetadata(filePath string) (map[string]string, err
 	etm.mu.Lock()
 	defer etm.mu.Unlock()
 
-	cmd := exec.Command("exiftool", "-json", "-dateFormat", "%Y:%m:%d %H:%M:%S", filePath)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("exiftool command failed: %v", err)
+	// Send command to persistent ExifTool process
+	command := fmt.Sprintf("-json\n-dateFormat\n%%Y:%%m:%%d %%H:%%M:%%S\n%s\n-execute\n", filePath)
+
+	if _, err := etm.stdin.Write([]byte(command)); err != nil {
+		return nil, fmt.Errorf("failed to write to exiftool stdin: %v", err)
+	}
+
+	// Read response until we see {ready} marker
+	var output strings.Builder
+	for etm.scanner.Scan() {
+		line := etm.scanner.Text()
+		if line == "{ready}" {
+			break
+		}
+		output.WriteString(line)
+		output.WriteString("\n")
+	}
+
+	if err := etm.scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read exiftool output: %v", err)
+	}
+
+	outputStr := strings.TrimSpace(output.String())
+	if outputStr == "" {
+		return make(map[string]string), nil
 	}
 
 	var exifData []map[string]interface{}
-	if err := json.Unmarshal(output, &exifData); err != nil {
+	if err := json.Unmarshal([]byte(outputStr), &exifData); err != nil {
 		return nil, fmt.Errorf("failed to parse exiftool JSON: %v", err)
 	}
 
@@ -592,13 +643,30 @@ func (etm *ExifToolManager) UpdateAllDates(filePath, dateStr string) error {
 	etm.mu.Lock()
 	defer etm.mu.Unlock()
 
-	cmd := exec.Command("exiftool",
-		"-overwrite_original",
-		fmt.Sprintf("-AllDates=%s", dateStr),
-		filePath,
-	)
+	// Send update command to persistent ExifTool process
+	command := fmt.Sprintf("-overwrite_original\n-AllDates=%s\n%s\n-execute\n", dateStr, filePath)
 
-	return cmd.Run()
+	if _, err := etm.stdin.Write([]byte(command)); err != nil {
+		return fmt.Errorf("failed to write to exiftool stdin: %v", err)
+	}
+
+	// Read response until we see {ready} marker
+	for etm.scanner.Scan() {
+		line := etm.scanner.Text()
+		if line == "{ready}" {
+			break
+		}
+		// Check for error messages
+		if strings.Contains(line, "Error:") || strings.Contains(line, "Warning:") {
+			return fmt.Errorf("exiftool error: %s", line)
+		}
+	}
+
+	if err := etm.scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read exiftool output: %v", err)
+	}
+
+	return nil
 }
 
 // Close cleans up the ExifTool manager
@@ -606,8 +674,31 @@ func (etm *ExifToolManager) Close() error {
 	etm.mu.Lock()
 	defer etm.mu.Unlock()
 
-	if etm.cmd != nil && etm.cmd.Process != nil {
-		return etm.cmd.Process.Kill()
+	// Send -stay_open False to gracefully terminate ExifTool
+	if etm.stdin != nil {
+		etm.stdin.Write([]byte("-stay_open\nFalse\n"))
+		etm.stdin.Close()
 	}
+
+	if etm.stdout != nil {
+		etm.stdout.Close()
+	}
+
+	if etm.cmd != nil && etm.cmd.Process != nil {
+		// Wait for the process to exit gracefully, or kill it after a timeout
+		done := make(chan error, 1)
+		go func() {
+			done <- etm.cmd.Wait()
+		}()
+
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			// Force kill if it doesn't exit gracefully
+			return etm.cmd.Process.Kill()
+		}
+	}
+
 	return nil
 }

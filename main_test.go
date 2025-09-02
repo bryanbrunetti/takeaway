@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -264,6 +265,28 @@ func TestSupportedFileTypes(t *testing.T) {
 	}
 }
 
+func BenchmarkExifToolPersistent(b *testing.B) {
+	// Skip if exiftool is not available
+	if _, err := exec.LookPath("exiftool"); err != nil {
+		b.Skip("ExifTool not available, skipping benchmark")
+	}
+
+	tmpDir := b.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("test content"), 0644)
+
+	etm, err := NewExifToolManager()
+	if err != nil {
+		b.Fatalf("Failed to create ExifTool manager: %v", err)
+	}
+	defer etm.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		etm.GetMetadata(testFile)
+	}
+}
+
 func BenchmarkParseSidecarDate(b *testing.B) {
 	tmpDir := b.TempDir()
 	sidecarPath := filepath.Join(tmpDir, "test.json")
@@ -387,6 +410,40 @@ func TestCreateAlbumSymlink(t *testing.T) {
 
 	if string(content) != "test content" {
 		t.Errorf("Expected content 'test content', got '%s'", string(content))
+	}
+}
+
+func TestExifToolPersistentMode(t *testing.T) {
+	// Skip if exiftool is not available
+	if _, err := exec.LookPath("exiftool"); err != nil {
+		t.Skip("ExifTool not available, skipping persistent mode test")
+	}
+
+	etm, err := NewExifToolManager()
+	if err != nil {
+		t.Fatalf("Failed to create ExifTool manager: %v", err)
+	}
+	defer etm.Close()
+
+	// Create a temporary test file
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err = os.WriteFile(testFile, []byte("test content"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test multiple calls to ensure persistent mode is working
+	for i := 0; i < 3; i++ {
+		metadata, err := etm.GetMetadata(testFile)
+		if err != nil {
+			t.Fatalf("Failed to get metadata on iteration %d: %v", i, err)
+		}
+
+		// Should at least have FileName
+		if filename, exists := metadata["FileName"]; !exists || filename != "test.txt" {
+			t.Errorf("Expected FileName 'test.txt', got '%s'", filename)
+		}
 	}
 }
 
