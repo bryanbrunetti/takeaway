@@ -48,6 +48,58 @@ func TestParseSidecarDate(t *testing.T) {
 	}
 }
 
+func TestFindSidecarFileEditedSuffix(t *testing.T) {
+	// Create a temporary directory for testing
+	tmpDir := t.TempDir()
+
+	// Create test files
+	mediaFileName := "IMG_6320.2013-12-04_131923-edited(1).JPG"
+	sidecarFileName := "IMG_6320.2013-12-04_131923.JPG.supplemental-me(1).json"
+
+	mediaFilePath := filepath.Join(tmpDir, mediaFileName)
+	sidecarFilePath := filepath.Join(tmpDir, sidecarFileName)
+
+	// Create the media file (empty file is sufficient for testing)
+	err := os.WriteFile(mediaFilePath, []byte{}, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the sidecar file with valid Google Photos metadata
+	sidecarData := map[string]interface{}{
+		"title": "IMG_6320.2013-12-04_131923.JPG",
+		"photoTakenTime": map[string]string{
+			"timestamp": "1386160763",
+		},
+	}
+
+	data, err := json.Marshal(sidecarData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(sidecarFilePath, data, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test the findSidecarFile function
+	mediaFile := MediaFile{
+		Path:     mediaFilePath,
+		BaseName: mediaFileName,
+		Dir:      tmpDir,
+	}
+
+	foundSidecar := findSidecarFile(mediaFile)
+	if foundSidecar == "" {
+		t.Error("Expected to find sidecar file, but got empty string")
+	}
+
+	if foundSidecar != sidecarFilePath {
+		t.Errorf("Expected sidecar path %s, got %s", sidecarFilePath, foundSidecar)
+	}
+}
+
 func TestParseExifDate(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -99,6 +151,20 @@ func TestParseExifDate(t *testing.T) {
 
 func TestFindSidecarFile(t *testing.T) {
 	tmpDir := t.TempDir()
+
+	// Explicitly create '-edited' files to ensure they exist for sidecar lookup in some tests
+	editedFiles := []string{
+		"IMG_123-edited.jpg",
+		"blank-edited.jpg",
+		"VeryLongFileNameThatGetsHeavilyTruncated-edited.jpg",
+	}
+	for _, name := range editedFiles {
+		path := filepath.Join(tmpDir, name)
+		err := os.WriteFile(path, []byte("media"), 0644)
+		if err != nil {
+			t.Fatalf("failed to create edited file %s: %v", name, err)
+		}
+	}
 
 	// Create test files including heavily truncated patterns and trailing underscore edge case
 	testFiles := []string{
@@ -264,28 +330,13 @@ func TestFindSidecarFile(t *testing.T) {
 		t.Run(tt.mediaFile.BaseName, func(t *testing.T) {
 			sidecarPath := findSidecarFile(tt.mediaFile)
 			expectedPath := filepath.Join(tmpDir, tt.expectedName)
-
 			if sidecarPath != expectedPath {
 				t.Errorf("Expected sidecar path %s, got %s", expectedPath, sidecarPath)
 			}
 		})
 	}
 
-	// Explicitly create '-edited' files to ensure they exist for sidecar lookup
-	editedFiles := []string{
-		"IMG_123-edited.jpg",
-		"blank-edited.jpg",
-		"VeryLongFileNameThatGetsHeavilyTruncated-edited.jpg",
-	}
-	for _, name := range editedFiles {
-		path := filepath.Join(tmpDir, name)
-		err := os.WriteFile(path, []byte("media"), 0644)
-		if err != nil {
-			t.Fatalf("failed to create edited file %s: %v", name, err)
-		}
-	}
-
-	// Edge case: parenthesis is part of the "real" filename (not a numbering suffix)
+	// Standalone edge case: literal parenthesis in filename (not as suffix-number)
 	t.Run("literal_parenthesis_in_filename", func(t *testing.T) {
 		filename := "3x (1).jpg"
 		sidecar := "3x (1).jpg.supplemental-metadata.json"
@@ -300,19 +351,17 @@ func TestFindSidecarFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create sidecar: %v", err)
 		}
-
-		mediaFile := MediaFile{
+		found := findSidecarFile(MediaFile{
 			Path:     mediaPath,
 			BaseName: filename,
 			Dir:      tmpDir,
-		}
-		found := findSidecarFile(mediaFile)
+		})
 		if found != sidecarPath {
 			t.Errorf("Expected literal parenthesis file to match sidecar %s, got %s", sidecarPath, found)
 		}
 	})
 
-	// Edge case: truncated extension in sidecar file (e.g. .jpeg => .j.json)
+	// Standalone edge case: truncated extension in sidecar file (e.g. .jpeg => .j.json)
 	t.Run("truncated_extension_sidecar", func(t *testing.T) {
 		filename := "02574B20-038B-49E5-ABCB-F8DEF39EBEF1_1_102_o.jpeg"
 		sidecar := "02574B20-038B-49E5-ABCB-F8DEF39EBEF1_1_102_o.j.json"
@@ -327,6 +376,59 @@ func TestFindSidecarFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create truncated sidecar: %v", err)
 		}
+		found := findSidecarFile(MediaFile{
+			Path:     mediaPath,
+			BaseName: filename,
+			Dir:      tmpDir,
+		})
+		if found != sidecarPath {
+			t.Errorf("Expected truncated extension file to match sidecar %s, got %s", sidecarPath, found)
+		}
+	})
+
+	// Standalone edge case: '-edited' removed, then parenthesis/number/truncation fallback
+	t.Run("edited_and_numbered_parenthesis_with_truncated_sidecar", func(t *testing.T) {
+		filename := "IMG_6320.2013-12-04_131923-edited(1).JPG"
+		sidecar := "IMG_6320.2013-12-04_131923.JPG.supplemental-me(1).json"
+		mediaPath := filepath.Join(tmpDir, filename)
+		sidecarPath := filepath.Join(tmpDir, sidecar)
+		err := os.WriteFile(mediaPath, []byte("media"), 0644)
+		if err != nil {
+			t.Fatalf("failed to create media file: %v", err)
+		}
+		sidecarContent := `{"title": "IMG_6320.2013-12-04_131923.JPG", "photoTakenTime": {"timestamp": "1354620000"}}`
+		err = os.WriteFile(sidecarPath, []byte(sidecarContent), 0644)
+		if err != nil {
+			t.Fatalf("failed to create '-edited' fallback sidecar: %v", err)
+		}
+
+		found := findSidecarFile(MediaFile{
+			Path:     mediaPath,
+			BaseName: filename,
+			Dir:      tmpDir,
+		})
+		if found != sidecarPath {
+			t.Errorf("Expected sidecar %s, got %s", sidecarPath, found)
+		}
+	})
+
+	// Edge case: '-edited' with parenthesis and truncation fallback for sidecar file, e.g.
+	// file: IMG_6320.2013-12-04_131923-edited(1).JPG
+	// sidecar: IMG_6320.2013-12-04_131923.JPG.supplemental-me(1).json
+	t.Run("edited_and_numbered_parenthesis_with_truncated_sidecar", func(t *testing.T) {
+		filename := "IMG_6320.2013-12-04_131923-edited(1).JPG"
+		sidecar := "IMG_6320.2013-12-04_131923.JPG.supplemental-me(1).json"
+		mediaPath := filepath.Join(tmpDir, filename)
+		sidecarPath := filepath.Join(tmpDir, sidecar)
+		err := os.WriteFile(mediaPath, []byte("media"), 0644)
+		if err != nil {
+			t.Fatalf("failed to create media file: %v", err)
+		}
+		sidecarContent := `{"title": "IMG_6320.2013-12-04_131923.JPG", "photoTakenTime": {"timestamp": "1354620000"}}`
+		err = os.WriteFile(sidecarPath, []byte(sidecarContent), 0644)
+		if err != nil {
+			t.Fatalf("failed to create '-edited' fallback sidecar: %v", err)
+		}
 
 		mediaFile := MediaFile{
 			Path:     mediaPath,
@@ -335,7 +437,7 @@ func TestFindSidecarFile(t *testing.T) {
 		}
 		found := findSidecarFile(mediaFile)
 		if found != sidecarPath {
-			t.Errorf("Expected truncated extension file to match sidecar %s, got %s", sidecarPath, found)
+			t.Errorf("Expected '-edited' file with parens/truncation to match sidecar %s, got %s", sidecarPath, found)
 		}
 	})
 }

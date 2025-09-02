@@ -383,9 +383,16 @@ func findSidecarFile(file MediaFile) string {
 	baseNameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
 	baseForSidecarNoUnderscore := baseNameNoExt + filepath.Ext(baseName)
 
-	// Handle '-edited' suffix
-	if strings.HasSuffix(baseNameNoExt, "-edited") {
-		baseNameNoExt = strings.TrimSuffix(baseNameNoExt, "-edited")
+	// Track if we had to strip -edited suffix for fallback
+	hadEditedSuffix := false
+	editedRegex := regexp.MustCompile(`^(.+)-edited(\([0-9]+\))?$`)
+	if matches := editedRegex.FindStringSubmatch(baseNameNoExt); len(matches) >= 2 {
+		baseNameNoExt = matches[1]
+		if len(matches) > 2 && matches[2] != "" {
+			// Preserve the parenthetical suffix
+			baseNameNoExt += matches[2]
+		}
+		hadEditedSuffix = true
 	}
 
 	// --- 1. Try literal/whole-base-name matching first (including any parentheses) ---
@@ -523,6 +530,23 @@ func findSidecarFile(file MediaFile) string {
 					}
 				}
 			}
+		}
+	}
+
+	// --- Enhanced fallback for -edited suffix: retry all matching logic with -edited removed ---
+	if hadEditedSuffix {
+		// Create a temporary MediaFile struct with the -edited suffix removed
+		tempBaseName := baseNameNoExt + filepath.Ext(baseName)
+		tempFile := MediaFile{
+			Path:     file.Path,
+			BaseName: tempBaseName,
+			Dir:      file.Dir,
+		}
+
+		// Recursively call findSidecarFile with the modified filename
+		// but prevent infinite recursion by ensuring we don't have -edited suffix
+		if !strings.Contains(tempFile.BaseName, "-edited") {
+			return findSidecarFile(tempFile)
 		}
 	}
 
