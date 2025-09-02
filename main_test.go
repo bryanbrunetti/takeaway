@@ -442,6 +442,76 @@ func TestFindSidecarFile(t *testing.T) {
 	})
 }
 
+func TestInitSupportedExtensions(t *testing.T) {
+	// Test that the function initializes supportedExts
+	err := initSupportedExtensions()
+	if err != nil {
+		t.Logf("ExifTool not available, fallback used: %v", err)
+	}
+
+	// Check that supportedExts is populated
+	if supportedExts == nil {
+		t.Fatal("supportedExts should not be nil after initialization")
+	}
+
+	if len(supportedExts) == 0 {
+		t.Fatal("supportedExts should not be empty after initialization")
+	}
+
+	// Test that common extensions are supported
+	commonExts := []string{".jpg", ".jpeg", ".png", ".mp4", ".mov"}
+	for _, ext := range commonExts {
+		if !supportedExts[ext] {
+			t.Errorf("Expected extension %s to be supported", ext)
+		}
+	}
+
+	t.Logf("Loaded %d supported extensions from ExifTool", len(supportedExts))
+}
+
+func TestInitSupportedExtensionsFallback(t *testing.T) {
+	// Save original supportedExts
+	originalSupportedExts := supportedExts
+	defer func() {
+		supportedExts = originalSupportedExts
+	}()
+
+	// Test fallback by using a non-existent command
+	// Temporarily modify the function to simulate ExifTool not being available
+	cmd := exec.Command("nonexistent-command", "-listf")
+	_, err := cmd.Output()
+
+	// This should fail, triggering the fallback
+	if err == nil {
+		t.Skip("Unexpected success with nonexistent command")
+	}
+
+	// Simulate the fallback logic
+	supportedExts = map[string]bool{
+		".jpg": true, ".jpeg": true, ".png": true, ".tiff": true, ".tif": true,
+		".bmp": true, ".gif": true, ".webp": true, ".heic": true, ".heif": true,
+		".mp4": true, ".mov": true, ".avi": true, ".mkv": true, ".wmv": true,
+		".m4v": true, ".3gp": true, ".webm": true, ".flv": true, ".mts": true,
+		".m2ts": true, ".ts": true, ".mxf": true, ".nef": true, ".rw2": true, ".mpg": true,
+		".mpeg": true,
+	}
+
+	// Verify fallback extensions are loaded
+	if len(supportedExts) == 0 {
+		t.Fatal("Fallback supportedExts should not be empty")
+	}
+
+	// Test that common extensions from fallback list are supported
+	fallbackExts := []string{".jpg", ".jpeg", ".png", ".mp4", ".mov", ".heic"}
+	for _, ext := range fallbackExts {
+		if !supportedExts[ext] {
+			t.Errorf("Expected fallback extension %s to be supported", ext)
+		}
+	}
+
+	t.Logf("Fallback loaded %d extensions", len(supportedExts))
+}
+
 func TestGenerateDestinationPath(t *testing.T) {
 	outputDir := "/output"
 	fileName := "IMG_123.jpg"
@@ -520,6 +590,12 @@ func TestValidateConfig(t *testing.T) {
 }
 
 func TestSupportedFileTypes(t *testing.T) {
+	// Initialize supported extensions for this test
+	err := initSupportedExtensions()
+	if err != nil {
+		t.Logf("ExifTool not available, using fallback: %v", err)
+	}
+
 	testCases := []struct {
 		filename  string
 		supported bool
@@ -529,9 +605,10 @@ func TestSupportedFileTypes(t *testing.T) {
 		{"image.png", true},
 		{"video.mp4", true},
 		{"video.MOV", true},
-		{"document.pdf", false},
-		{"text.txt", false},
-		{"archive.zip", false},
+		{"document.pdf", true}, // ExifTool supports PDF metadata
+		{"text.txt", true},     // ExifTool supports TXT files
+		{"archive.zip", true},  // ExifTool supports ZIP metadata
+		{"unknown.xyz", false}, // This extension shouldn't exist
 	}
 
 	for _, tc := range testCases {

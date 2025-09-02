@@ -78,14 +78,11 @@ type Result struct {
 }
 
 var (
-	// Supported media file extensions
-	supportedExts = map[string]bool{
-		".jpg": true, ".jpeg": true, ".png": true, ".tiff": true, ".tif": true,
-		".bmp": true, ".gif": true, ".webp": true, ".heic": true, ".heif": true,
-		".mp4": true, ".mov": true, ".avi": true, ".mkv": true, ".wmv": true,
-		".m4v": true, ".3gp": true, ".webm": true, ".flv": true, ".mts": true,
-		".m2ts": true, ".ts": true, ".mxf": true, ".nef": true,
-	}
+	// Supported media file extensions (populated dynamically from ExifTool)
+	// This map is initialized at startup by calling `exiftool -listf` to get the
+	// comprehensive list of supported formats (300+ extensions). Falls back to
+	// a hardcoded list if ExifTool is not available.
+	supportedExts map[string]bool
 
 	// EXIF date tags to check in order of priority
 	exifDateTags = []string{
@@ -112,6 +109,12 @@ func main() {
 	fmt.Printf("  Move files: %t\n", config.Move)
 	fmt.Printf("  Dry run: %t\n", config.DryRun)
 	fmt.Printf("  Workers: %d\n\n", config.Workers)
+
+	// Initialize supported file extensions from ExifTool
+	err := initSupportedExtensions()
+	if err != nil {
+		fmt.Printf("Warning: Failed to get extensions from ExifTool (%v), using fallback list\n", err)
+	}
 
 	// Initialize ExifTool manager with one process per worker
 	exifTool, err := NewExifToolManager(config.Workers)
@@ -202,6 +205,47 @@ func validateConfig(config *Config) error {
 	if !config.DryRun {
 		if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
 			return fmt.Errorf("failed to create output directory: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// initSupportedExtensions populates the supportedExts map from ExifTool's supported formats
+func initSupportedExtensions() error {
+	cmd := exec.Command("exiftool", "-listf")
+	output, err := cmd.Output()
+	if err != nil {
+		// Fallback to hardcoded list if ExifTool is not available
+		supportedExts = map[string]bool{
+			".jpg": true, ".jpeg": true, ".png": true, ".tiff": true, ".tif": true,
+			".bmp": true, ".gif": true, ".webp": true, ".heic": true, ".heif": true,
+			".mp4": true, ".mov": true, ".avi": true, ".mkv": true, ".wmv": true,
+			".m4v": true, ".3gp": true, ".webm": true, ".flv": true, ".mts": true,
+			".m2ts": true, ".ts": true, ".mxf": true, ".nef": true, ".rw2": true, ".mpg": true,
+			".mpeg": true,
+		}
+		return err
+	}
+
+	supportedExts = make(map[string]bool)
+	lines := strings.Split(string(output), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Skip header and empty lines
+		if strings.HasPrefix(line, "Supported file extensions:") || line == "" {
+			continue
+		}
+
+		// Parse extensions from the output
+		extensions := strings.Fields(line)
+		for _, ext := range extensions {
+			if ext != "" {
+				// Convert to lowercase and add dot prefix
+				normalizedExt := "." + strings.ToLower(ext)
+				supportedExts[normalizedExt] = true
+			}
 		}
 	}
 
