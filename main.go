@@ -395,19 +395,43 @@ func findSidecarFile(file MediaFile) string {
 		numberSuffix = ""
 	}
 
-	// Create regex pattern for sidecar matching
-	// Matches: filename.json or filename.{any_chars}.json or filename.{any_chars}(number).json
-	escapedBase := regexp.QuoteMeta(baseForSidecar)
-	var pattern string
-	if numberSuffix != "" {
-		pattern = fmt.Sprintf(`^%s(?:\..*)?%s\.json$`, escapedBase, numberSuffix)
-	} else {
-		pattern = fmt.Sprintf(`^%s(?:\..*)?\.json$`, escapedBase)
+	// Handle trailing underscore removal edge case
+	// Google Photos sometimes removes trailing underscores from filenames when creating JSON sidecars
+	baseForSidecarNoUnderscore := baseForSidecar
+	baseNameNoUnderscoreNoExt := ""
+
+	if strings.HasSuffix(strings.TrimSuffix(baseForSidecar, filepath.Ext(baseForSidecar)), "_") {
+		// Remove trailing underscore from the base name (but keep the extension for one pattern)
+		ext := filepath.Ext(baseForSidecar)
+		nameWithoutExt := strings.TrimSuffix(baseForSidecar, ext)
+		baseForSidecarNoUnderscore = strings.TrimSuffix(nameWithoutExt, "_") + ext
+		baseNameNoUnderscoreNoExt = strings.TrimSuffix(nameWithoutExt, "_")
 	}
 
-	sidecarRegex, err := regexp.Compile(pattern)
-	if err != nil {
-		return "" // Fallback to no sidecar if regex compilation fails
+	// Create regex patterns for sidecar matching
+	escapedBase := regexp.QuoteMeta(baseForSidecar)
+	escapedBaseNoUnderscore := regexp.QuoteMeta(baseForSidecarNoUnderscore)
+	escapedBaseNoUnderscoreNoExt := regexp.QuoteMeta(baseNameNoUnderscoreNoExt)
+
+	var patterns []string
+	if numberSuffix != "" {
+		// Pattern with original filename
+		patterns = append(patterns, fmt.Sprintf(`^%s(?:\..*)?%s\.json$`, escapedBase, numberSuffix))
+		// Pattern without trailing underscore (if different)
+		if baseForSidecarNoUnderscore != baseForSidecar {
+			patterns = append(patterns, fmt.Sprintf(`^%s(?:\..*)?%s\.json$`, escapedBaseNoUnderscore, numberSuffix))
+			// Pattern for base name without extension and underscore (e.g., "name_.jpg" -> "name.json")
+			patterns = append(patterns, fmt.Sprintf(`^%s%s\.json$`, escapedBaseNoUnderscoreNoExt, numberSuffix))
+		}
+	} else {
+		// Pattern with original filename
+		patterns = append(patterns, fmt.Sprintf(`^%s(?:\..*)?\.json$`, escapedBase))
+		// Pattern without trailing underscore (if different)
+		if baseForSidecarNoUnderscore != baseForSidecar {
+			patterns = append(patterns, fmt.Sprintf(`^%s(?:\..*)?\.json$`, escapedBaseNoUnderscore))
+			// Pattern for base name without extension and underscore (e.g., "name_.jpg" -> "name.json")
+			patterns = append(patterns, fmt.Sprintf(`^%s\.json$`, escapedBaseNoUnderscoreNoExt))
+		}
 	}
 
 	// Read directory contents once
@@ -416,13 +440,85 @@ func findSidecarFile(file MediaFile) string {
 		return ""
 	}
 
-	// Find matching JSON files
-	for _, entry := range entries {
-		if !entry.IsDir() && sidecarRegex.MatchString(entry.Name()) {
-			sidecarPath := filepath.Join(file.Dir, entry.Name())
-			// Verify it's actually a Google Photos sidecar by checking content
-			if isGooglePhotosSidecar(sidecarPath) {
-				return sidecarPath
+	// Find matching JSON files using all patterns
+	for _, pattern := range patterns {
+		sidecarRegex, err := regexp.Compile(pattern)
+		if err != nil {
+			continue // Skip invalid regex patterns
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() && sidecarRegex.MatchString(entry.Name()) {
+				sidecarPath := filepath.Join(file.Dir, entry.Name())
+				// Verify it's actually a Google Photos sidecar by checking content
+				if isGooglePhotosSidecar(sidecarPath) {
+					return sidecarPath
+				}
+			}
+		}
+	}
+
+	// If no exact patterns match, try progressive prefix matching for arbitrary truncation
+	// This handles cases like "BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg" -> "BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json"
+	return findSidecarWithPrefixMatching(file, entries)
+}
+
+func findSidecarWithPrefixMatching(file MediaFile, entries []os.DirEntry) string {
+	baseName := file.BaseName
+	baseNameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+
+	// Handle numbered files
+	numberSuffixRegex := regexp.MustCompile(`^(.+)\((\d+)\)$`)
+	var baseForMatching string
+	var numberSuffix string
+
+	if matches := numberSuffixRegex.FindStringSubmatch(baseNameNoExt); len(matches) == 3 {
+		baseForMatching = matches[1]
+		numberSuffix = "(" + matches[2] + ")"
+	} else {
+		baseForMatching = baseNameNoExt
+		numberSuffix = ""
+	}
+
+	// Try progressively shorter prefixes (minimum 10 characters to avoid false positives)
+	minPrefixLength := 10
+	if len(baseForMatching) < minPrefixLength {
+		minPrefixLength = len(baseForMatching)
+	}
+
+	for prefixLen := len(baseForMatching); prefixLen >= minPrefixLength; prefixLen-- {
+		prefix := baseForMatching[:prefixLen]
+		escapedPrefix := regexp.QuoteMeta(prefix)
+
+		var candidatePattern string
+		if numberSuffix != "" {
+			escapedNumberSuffix := regexp.QuoteMeta(numberSuffix)
+			candidatePattern = fmt.Sprintf(`^%s.*%s\.json$`, escapedPrefix, escapedNumberSuffix)
+		} else {
+			candidatePattern = fmt.Sprintf(`^%s.*\.json$`, escapedPrefix)
+		}
+
+		regex, err := regexp.Compile(candidatePattern)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() && regex.MatchString(entry.Name()) {
+				sidecarPath := filepath.Join(file.Dir, entry.Name())
+				// Additional validation: check content and ensure it's not too different in length
+				if isGooglePhotosSidecar(sidecarPath) {
+					sidecarName := strings.TrimSuffix(entry.Name(), ".json")
+					// Remove number suffix from sidecar name for length comparison
+					if numberSuffix != "" {
+						sidecarName = strings.TrimSuffix(sidecarName, numberSuffix)
+					}
+					// Allow up to 30% length difference to handle arbitrary truncation
+					maxLenDiff := len(baseForMatching) / 3
+					if len(baseForMatching)-len(sidecarName) <= maxLenDiff && len(baseForMatching)-len(sidecarName) >= 0 {
+						return sidecarPath
+					}
+				}
 			}
 		}
 	}

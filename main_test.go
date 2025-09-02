@@ -100,7 +100,7 @@ func TestParseExifDate(t *testing.T) {
 func TestFindSidecarFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create test files including heavily truncated patterns
+	// Create test files including heavily truncated patterns and trailing underscore edge case
 	testFiles := []string{
 		"IMG_123.jpg",
 		"IMG_123.jpg.json",
@@ -114,6 +114,14 @@ func TestFindSidecarFile(t *testing.T) {
 		"Bonanno1979BryanAndGrandpa45yrsOld_1.jpg.suppl.json",
 		"VeryLongFileNameThatGetsHeavilyTruncated.jpg",
 		"VeryLongFileNameThatGetsHeavilyTruncated.jpg.s.json",
+		"47931_1530376731723_1003886514_1589589_6447425_.jpg",
+		"47931_1530376731723_1003886514_1589589_6447425.json",
+		"TrailingUnderscore_.jpg",
+		"TrailingUnderscore.jpg.supplemental-metadata.json",
+		"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg",
+		"BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json",
+		"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg",
+		"BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json",
 	}
 
 	// Create Google Photos-style sidecar content
@@ -182,6 +190,38 @@ func TestFindSidecarFile(t *testing.T) {
 				Dir:      tmpDir,
 			},
 			expectedName: "VeryLongFileNameThatGetsHeavilyTruncated.jpg.s.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "47931_1530376731723_1003886514_1589589_6447425_.jpg"),
+				BaseName: "47931_1530376731723_1003886514_1589589_6447425_.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "47931_1530376731723_1003886514_1589589_6447425.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "TrailingUnderscore_.jpg"),
+				BaseName: "TrailingUnderscore_.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "TrailingUnderscore.jpg.supplemental-metadata.json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg"),
+				BaseName: "BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json",
+		},
+		{
+			mediaFile: MediaFile{
+				Path:     filepath.Join(tmpDir, "BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg"),
+				BaseName: "BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg",
+				Dir:      tmpDir,
+			},
+			expectedName: "BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json",
 		},
 	}
 
@@ -620,7 +660,7 @@ func TestSidecarRegexMatching(t *testing.T) {
 func BenchmarkSidecarMatchingRegex(b *testing.B) {
 	tmpDir := b.TempDir()
 
-	// Create test files with various truncation patterns
+	// Create test files with various truncation patterns including trailing underscore edge case
 	testCases := []struct {
 		media   string
 		sidecar string
@@ -630,6 +670,10 @@ func BenchmarkSidecarMatchingRegex(b *testing.B) {
 		{"Bonanno1979BryanAndGrandpa45yrsOld_1.jpg", "Bonanno1979BryanAndGrandpa45yrsOld_1.jpg.suppl.json"},
 		{"VeryLongFileName.jpg", "VeryLongFileName.jpg.s.json"},
 		{"NumberedFile(1).jpg", "NumberedFile.jpg.supplemental-metadata(1).json"},
+		{"47931_1530376731723_1003886514_1589589_6447425_.jpg", "47931_1530376731723_1003886514_1589589_6447425.json"},
+		{"TrailingUnderscore_.jpg", "TrailingUnderscore.jpg.supplemental-metadata.json"},
+		{"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg", "BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json"},
+		{"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg", "BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json"},
 	}
 
 	sidecarContent := `{"title": "test.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
@@ -658,5 +702,118 @@ func BenchmarkParseExifDate(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		parseExifDate(dateStr)
+	}
+}
+
+func TestTrailingUnderscoreEdgeCase(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create the real-world example files
+	mediaFile := "47931_1530376731723_1003886514_1589589_6447425_.jpg"
+	sidecarFile := "47931_1530376731723_1003886514_1589589_6447425.json"
+
+	sidecarContent := `{"title": "47931_1530376731723_1003886514_1589589_6447425_.jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
+
+	// Create files
+	err := os.WriteFile(filepath.Join(tmpDir, mediaFile), []byte("test image content"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(filepath.Join(tmpDir, sidecarFile), []byte(sidecarContent), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	file := MediaFile{
+		Path:     filepath.Join(tmpDir, mediaFile),
+		BaseName: mediaFile,
+		Dir:      tmpDir,
+	}
+
+	result := findSidecarFile(file)
+	expected := filepath.Join(tmpDir, sidecarFile)
+
+	if result != expected {
+		t.Errorf("Expected trailing underscore edge case to find %s, got %s", expected, result)
+	}
+
+	// Test another variant
+	mediaFile2 := "AnotherExample_.jpg"
+	sidecarFile2 := "AnotherExample.jpg.su.json"
+
+	sidecarContent2 := `{"title": "AnotherExample_.jpg", "photoTakenTime": {"timestamp": "1672531300"}}`
+
+	err = os.WriteFile(filepath.Join(tmpDir, mediaFile2), []byte("test image content"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(filepath.Join(tmpDir, sidecarFile2), []byte(sidecarContent2), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	file2 := MediaFile{
+		Path:     filepath.Join(tmpDir, mediaFile2),
+		BaseName: mediaFile2,
+		Dir:      tmpDir,
+	}
+
+	result2 := findSidecarFile(file2)
+	expected2 := filepath.Join(tmpDir, sidecarFile2)
+
+	if result2 != expected2 {
+		t.Errorf("Expected second trailing underscore case to find %s, got %s", expected2, result2)
+	}
+}
+
+func TestArbitraryTruncationEdgeCase(t *testing.T) {
+	// Create the real-world truncation examples
+	testCases := []struct {
+		mediaFile   string
+		sidecarFile string
+	}{
+		{
+			"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg",
+			"BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json",
+		},
+		{
+			"BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg",
+			"BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json",
+		},
+	}
+
+	for i, tc := range testCases {
+		t.Run(fmt.Sprintf("Case%d", i+1), func(t *testing.T) {
+			// Create separate directory for each test case to avoid cross-matching
+			tmpDir := t.TempDir()
+
+			sidecarContent := fmt.Sprintf(`{"title": "%s", "photoTakenTime": {"timestamp": "%d"}}`, tc.mediaFile, 1672531200+i*3600)
+
+			// Create files
+			err := os.WriteFile(filepath.Join(tmpDir, tc.mediaFile), []byte("test image content"), 0644)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = os.WriteFile(filepath.Join(tmpDir, tc.sidecarFile), []byte(sidecarContent), 0644)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			file := MediaFile{
+				Path:     filepath.Join(tmpDir, tc.mediaFile),
+				BaseName: tc.mediaFile,
+				Dir:      tmpDir,
+			}
+
+			result := findSidecarFile(file)
+			expected := filepath.Join(tmpDir, tc.sidecarFile)
+
+			if result != expected {
+				t.Errorf("Expected arbitrary truncation case to find %s, got %s", expected, result)
+			}
+		})
 	}
 }

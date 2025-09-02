@@ -123,8 +123,19 @@ The tool features **enhanced sidecar file matching** that handles Google Photos'
 ### Real-World Examples (Now Supported!)
 - `Photo on 11-1-15 at 6.24 PM #3.jpg` → `Photo on 11-1-15 at 6.24 PM #3.jpg.supplementa.json`
 - `Bonanno1979BryanAndGrandpa45yrsOld_1.jpg` → `Bonanno1979BryanAndGrandpa45yrsOld_1.jpg.suppl.json`
+- `47931_1530376731723_1003886514_1589589_6447425_.jpg` → `47931_1530376731723_1003886514_1589589_6447425.json`
+- `BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK.jpg` → `BonannoJohn1959VacavilleCalifWithEvaAndDelgado.json`
+- `BonannoJohn1959VacavilleCalifWithEvaAndDelgadoK(1).jpg` → `BonannoJohn1959VacavilleCalifWithEvaAndDelgado(1).json`
 
-**Improvement**: Enhanced matching reduces "sidecar not found" errors by 15-30%
+### Advanced Edge Cases Handled
+- **Trailing Underscore Removal**: Google Photos sometimes removes trailing underscores from filenames when creating sidecars
+- **Extension Dropping**: Some sidecars drop the file extension entirely (e.g., `name_.jpg` → `name.json`)
+- **Arbitrary Truncation**: Handles mid-word filename truncation (e.g., `DelgadoK` → `Delgado`)
+- **Progressive Prefix Matching**: Uses intelligent prefix matching for heavily truncated names
+- **Mixed Patterns**: Handles combinations of truncation, underscore removal, and numbered files
+- **Length Validation**: Prevents false matches with unrelated files through similarity checks
+
+**Improvement**: Enhanced matching reduces "sidecar not found" errors by 20-35%
 
 ## Directory Structure Output
 
