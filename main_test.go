@@ -284,6 +284,34 @@ func TestFindSidecarFile(t *testing.T) {
 			t.Fatalf("failed to create edited file %s: %v", name, err)
 		}
 	}
+
+	// Edge case: parenthesis is part of the "real" filename (not a numbering suffix)
+	t.Run("literal_parenthesis_in_filename", func(t *testing.T) {
+		filename := "3x (1).jpg"
+		sidecar := "3x (1).jpg.supplemental-metadata.json"
+		// Create media file and sidecar in temp dir
+		mediaPath := filepath.Join(tmpDir, filename)
+		sidecarPath := filepath.Join(tmpDir, sidecar)
+		err := os.WriteFile(mediaPath, []byte("media"), 0644)
+		if err != nil {
+			t.Fatalf("failed to create media file: %v", err)
+		}
+		sidecarContent := `{"title": "3x (1).jpg", "photoTakenTime": {"timestamp": "1672531200"}}`
+		err = os.WriteFile(sidecarPath, []byte(sidecarContent), 0644)
+		if err != nil {
+			t.Fatalf("failed to create sidecar: %v", err)
+		}
+
+		mediaFile := MediaFile{
+			Path:     mediaPath,
+			BaseName: filename,
+			Dir:      tmpDir,
+		}
+		found := findSidecarFile(mediaFile)
+		if found != sidecarPath {
+			t.Errorf("Expected literal parenthesis file to match sidecar %s, got %s", sidecarPath, found)
+		}
+	})
 }
 
 func TestGenerateDestinationPath(t *testing.T) {
