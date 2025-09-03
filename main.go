@@ -392,24 +392,38 @@ func processMediaFile(config *Config, exifTool *ExifToolProcess, file MediaFile)
 
 		if config.DryRun {
 			result.Action += fmt.Sprintf(" | Would move to: %s", destPath)
+
+			// Check if album symlink would be created in dry run
+			if albumName := getAlbumName(file.Dir); albumName != "" {
+				symlinkPath := generateAlbumSymlinkPath(config.OutputDir, albumName, file.BaseName)
+				result.Action += fmt.Sprintf(" | Would create album symlink: %s", symlinkPath)
+			}
 		} else {
+			// Check if we need to create a symlink before moving the file
+			var symlinkPath string
+			var needsSymlink bool
+			if albumName := getAlbumName(file.Dir); albumName != "" {
+				symlinkPath = generateAlbumSymlinkPath(config.OutputDir, albumName, file.BaseName)
+				needsSymlink = true
+			}
+
+			// Move the file first
 			if err := moveFile(file.Path, destPath); err != nil {
 				result.Error = fmt.Errorf("failed to move file: %v", err)
 				return result
 			}
 			result.Action += fmt.Sprintf(" | Moved to: %s", destPath)
-		}
 
-		// Create album symlink if album metadata exists
-		if albumName := getAlbumName(file.Dir); albumName != "" {
-			symlinkPath := generateAlbumSymlinkPath(config.OutputDir, albumName, file.BaseName)
-
-			if config.DryRun {
-				result.Action += fmt.Sprintf(" | Would create album symlink: %s", symlinkPath)
-			} else {
+			// If symlink is needed, try to create it
+			if needsSymlink {
 				if err := createAlbumSymlink(destPath, symlinkPath); err != nil {
-					// Don't fail the entire operation for symlink errors, just log
-					result.Action += fmt.Sprintf(" | Symlink error: %v", err)
+					// Symlink creation failed - move file back to original location
+					if rollbackErr := moveFile(destPath, file.Path); rollbackErr != nil {
+						result.Error = fmt.Errorf("failed to create symlink (%v) and failed to rollback file move (%v)", err, rollbackErr)
+					} else {
+						result.Error = fmt.Errorf("failed to create symlink, file moved back to original location: %v", err)
+					}
+					return result
 				} else {
 					result.Action += fmt.Sprintf(" | Album symlink created: %s", symlinkPath)
 				}

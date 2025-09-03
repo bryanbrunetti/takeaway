@@ -1145,3 +1145,117 @@ func TestDoubleDotEdgeCase(t *testing.T) {
 		t.Errorf("Expected double-dot edge case to find %s, got %s", expected, result)
 	}
 }
+
+func TestSymlinkErrorHandling(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	outputDir := filepath.Join(tmpDir, "output")
+	albumDir := filepath.Join(sourceDir, "Test Album")
+
+	// Create directories
+	err := os.MkdirAll(albumDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a test image file with EXIF data
+	mediaFile := "test_image.jpg"
+	mediaPath := filepath.Join(albumDir, mediaFile)
+	err = os.WriteFile(mediaPath, []byte("fake image data"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create album metadata file to ensure symlink will be attempted
+	albumMetaPath := filepath.Join(albumDir, "metadata.json")
+	albumMeta := AlbumMetadata{Title: "Test Album"}
+	metaData, _ := json.Marshal(albumMeta)
+	err = os.WriteFile(albumMetaPath, metaData, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create sidecar with date
+	sidecarPath := filepath.Join(albumDir, "test_image.jpg.json")
+	sidecarData := SidecarData{
+		Title: "test_image.jpg",
+		PhotoTakenTime: struct {
+			Timestamp string `json:"timestamp"`
+		}{
+			Timestamp: "1672531200", // 2023-01-01 00:00:00 UTC
+		},
+	}
+	sidecarBytes, _ := json.Marshal(sidecarData)
+	err = os.WriteFile(sidecarPath, sidecarBytes, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a symlink destination directory that we'll make read-only to force symlink failure
+	symlinkBaseDir := filepath.Join(outputDir, "albums", "Test Album")
+	err = os.MkdirAll(symlinkBaseDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make the symlink directory read-only to force symlink creation failure
+	err = os.Chmod(symlinkBaseDir, 0555) // read-only
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ensure we restore permissions after test
+	defer func() {
+		os.Chmod(symlinkBaseDir, 0755)
+	}()
+
+	// Create config for moving files
+	config := &Config{
+		SourceDir: sourceDir,
+		OutputDir: outputDir,
+		Move:      true,
+		DryRun:    false,
+		Workers:   1,
+	}
+
+	// Create ExifTool manager
+	exifManager, err := NewExifToolManager(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exifManager.Close()
+	exifTool := exifManager.GetProcessForWorker(0)
+
+	// Create MediaFile
+	file := MediaFile{
+		Path:     mediaPath,
+		BaseName: mediaFile,
+		Dir:      albumDir,
+	}
+
+	// Process the file - this should fail because symlink creation will fail
+	result := processMediaFile(config, exifTool, file)
+
+	// Verify that the operation failed
+	if result.Success {
+		t.Error("Expected processMediaFile to fail when symlink creation fails")
+	}
+
+	// Verify that the error mentions symlink failure
+	if result.Error == nil {
+		t.Error("Expected an error when symlink creation fails")
+	} else if !strings.Contains(result.Error.Error(), "failed to create symlink") {
+		t.Errorf("Expected error to mention symlink failure, got: %v", result.Error)
+	}
+
+	// Most importantly: verify that the original file is still in its original location
+	if _, err := os.Stat(mediaPath); os.IsNotExist(err) {
+		t.Error("Original file should still exist in source location when symlink creation fails")
+	}
+
+	// Verify that no file was left in the destination (it should have been rolled back)
+	destPath := generateDestinationPath(outputDir, mediaFile, time.Unix(1672531200, 0))
+	if _, err := os.Stat(destPath); err == nil {
+		t.Error("File should not exist in destination directory when symlink creation fails and rollback occurs")
+	}
+}
