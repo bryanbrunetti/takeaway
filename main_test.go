@@ -542,12 +542,22 @@ func TestValidateConfig(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid config",
+			name: "valid config with output",
 			config: &Config{
 				SourceDir: ".",
 				OutputDir: "/tmp/test",
 				Workers:   4,
 				DryRun:    true, // Use dry run to avoid creating directories
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid config with move path",
+			config: &Config{
+				SourceDir: ".",
+				Move:      "/tmp/test",
+				Workers:   4,
+				DryRun:    true,
 			},
 			wantErr: false,
 		},
@@ -559,7 +569,7 @@ func TestValidateConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "missing output",
+			name: "missing both output and move",
 			config: &Config{
 				SourceDir: ".",
 			},
@@ -593,6 +603,13 @@ func TestValidateConfig(t *testing.T) {
 			if tt.config.Workers <= 0 && err == nil {
 				if tt.config.Workers != 4 {
 					t.Errorf("Expected workers to be corrected to 4, got %d", tt.config.Workers)
+				}
+			}
+
+			// Check that move path sets output directory
+			if tt.config.Move != "" && err == nil {
+				if tt.config.OutputDir != tt.config.Move {
+					t.Errorf("Expected OutputDir to be set to Move path '%s', got '%s'", tt.config.Move, tt.config.OutputDir)
 				}
 			}
 		})

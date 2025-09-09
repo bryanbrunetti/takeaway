@@ -125,20 +125,20 @@ echo -e "${GREEN}Dry-run mode allows you to preview changes without modifying fi
 print_subsection "Basic Dry Run"
 run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_basic -dry-run"
 
-print_subsection "Dry Run with File Organization"
-run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_organized -move -dry-run"
+print_subsection "Dry Run with File Organization (Move to Path)"
+run_command "./bin/takeaway-cleanup -source ./test/src -move ./test/demo_organized -dry-run"
 
 # Show different worker configurations
 print_header "Worker Pool Configurations"
 echo -e "${GREEN}The application uses configurable worker pools for concurrent processing.${NC}"
 
-print_subsection "Single Worker (Sequential)"
+print_subsection "Single Worker (Sequential) - In-place EXIF Update"
 run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_single -workers 1 -dry-run"
 
-print_subsection "Multiple Workers (Concurrent)"
-run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_multi -workers 4 -dry-run"
+print_subsection "Multiple Workers (Concurrent) - Move to Path"
+run_command "./bin/takeaway-cleanup -source ./test/src -move ./test/demo_multi -workers 4 -dry-run"
 
-print_subsection "High Performance (8 Workers)"
+print_subsection "High Performance (8 Workers) - In-place Update"
 run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_performance -workers 8 -dry-run"
 
 # Test error handling
@@ -152,11 +152,11 @@ else
 fi
 
 print_subsection "Missing Required Parameters"
-echo -e "${CYAN}Testing with missing parameters:${NC}"
+echo -e "${CYAN}Testing with missing parameters (no -move or -output):${NC}"
 if ./bin/takeaway-cleanup -source ./test/src 2>/dev/null; then
     echo -e "${RED}Unexpected: Should have failed${NC}"
 else
-    echo -e "${GREEN}✓ Correctly required output directory${NC}"
+    echo -e "${GREEN}✓ Correctly required either -move or -output directory${NC}"
 fi
 
 # Show cross-platform compilation
@@ -261,21 +261,25 @@ echo ""
 
 # Use case examples
 print_header "Common Use Cases"
-echo -e "${GREEN}1. Basic EXIF Cleanup:${NC}"
+echo -e "${GREEN}1. Basic EXIF Cleanup (In-place):${NC}"
 echo "   ./takeaway-cleanup -source /takeout -output /cleaned"
-echo "   → Updates missing EXIF dates, preserves structure"
+echo "   → Updates missing EXIF dates in place, preserves original structure"
 echo ""
 echo -e "${GREEN}2. Complete Reorganization:${NC}"
-echo "   ./takeaway-cleanup -source /takeout -output /organized -move"
-echo "   → Organizes all files by date in YYYY/MM/DD structure"
+echo "   ./takeaway-cleanup -source /takeout -move /organized"
+echo "   → Moves and organizes all files by date in YYYY/MM/DD structure"
 echo ""
-echo -e "${GREEN}3. Safe Preview:${NC}"
-echo "   ./takeaway-cleanup -source /takeout -output /organized -move -dry-run"
-echo "   → Shows what would be done without making changes"
+echo -e "${GREEN}3. Safe Preview (Move):${NC}"
+echo "   ./takeaway-cleanup -source /takeout -move /organized -dry-run"
+echo "   → Shows what would be moved without making changes"
 echo ""
-echo -e "${GREEN}4. High-Performance Processing:${NC}"
-echo "   ./takeaway-cleanup -source /takeout -output /organized -move -workers 8"
-echo "   → Uses 8 concurrent workers for faster processing"
+echo -e "${GREEN}4. Safe Preview (In-place):${NC}"
+echo "   ./takeaway-cleanup -source /takeout -output /cleaned -dry-run"
+echo "   → Shows what EXIF dates would be updated in place"
+echo ""
+echo -e "${GREEN}5. High-Performance Processing:${NC}"
+echo "   ./takeaway-cleanup -source /takeout -move /organized -workers 8"
+echo "   → Uses 8 concurrent workers for faster file organization"
 echo ""
 
 # Cleanup demonstration files

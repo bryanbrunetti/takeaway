@@ -57,45 +57,58 @@ Download the appropriate binary for your platform from the releases section.
 ## Usage
 
 ```bash
-./takeaway-cleanup -source /path/to/takeout -output /path/to/cleaned [OPTIONS]
+./takeaway-cleanup -source /path/to/takeout [OPTIONS]
 ```
 
 ### Required Flags
 
 - `-source`: Path to your Google Photos Takeout root directory
-- `-output`: Path where cleaned/organized files should be placed
 
 ### Optional Flags
 
-- `-move`: Enable moving files to organized directory structure (YYYY/MM/DD)
+- `-move`: Path to move organized files to (enables date-based organization YYYY/MM/DD)
+- `-output`: Path where cleaned files should be placed (required if -move not used)
 - `-dry-run`: Simulate the process without making any changes
 - `-workers`: Number of concurrent workers (default: 4)
 
 ### Examples
 
-**Basic cleanup with EXIF metadata update:**
+**Update EXIF metadata in place (no file moving):**
 ```bash
 ./takeaway-cleanup -source ./Google_Photos_Takeout -output ./Cleaned_Photos
 ```
 
-**Organize files by date with albums and dry run:**
+**Move and organize files by date:**
 ```bash
-./takeaway-cleanup -source ./Google_Photos_Takeout -output ./Organized_Photos -move -dry-run
+./takeaway-cleanup -source ./Google_Photos_Takeout -move ./Organized_Photos
 ```
 
-**High-performance processing with more workers:**
+**Preview file organization without making changes:**
 ```bash
-./takeaway-cleanup -source ./Google_Photos_Takeout -output ./Cleaned_Photos -move -workers 8
+./takeaway-cleanup -source ./Google_Photos_Takeout -move ./Organized_Photos -dry-run
+```
+
+**High-performance in-place processing:**
+```bash
+./takeaway-cleanup -source ./Google_Photos_Takeout -output ./Cleaned_Photos -workers 8
 ```
 
 ## How It Works
 
+### In-Place Mode (when using `-output`)
+1. **File Discovery**: Recursively scans the source directory for supported media files
+2. **Metadata Extraction**: Uses ExifTool to read existing EXIF data from each file
+3. **Date Priority Check**: Searches for creation dates in EXIF tags (in priority order)
+4. **Sidecar Processing**: If no EXIF date is found, locates and parses corresponding JSON sidecar files
+5. **EXIF Updates**: Updates missing EXIF date metadata in place using information from sidecars
+
+### Move Mode (when using `-move`)
 1. **File Discovery**: Recursively scans the source directory for supported media files
 2. **Metadata Extraction**: Uses ExifTool to read existing EXIF data from each file
 3. **Date Priority Check**: Searches for creation dates in EXIF tags (in priority order)
 4. **Sidecar Processing**: If no EXIF date is found, locates and parses corresponding JSON sidecar files
 5. **EXIF Updates**: Updates missing or incorrect date metadata using information from sidecars
-6. **File Organization**: Optionally moves files to ALL_PHOTOS with date-organized directory structure
+6. **File Organization**: Moves files to specified path with date-organized directory structure (YYYY/MM/DD)
 7. **Album Processing**: Creates symlinks in ALBUMS directory based on album metadata.json files
 
 ## JSON Sidecar File Support

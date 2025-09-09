@@ -25,7 +25,7 @@ var version = "development"
 type Config struct {
 	SourceDir string
 	OutputDir string
-	Move      bool
+	Move      string
 	DryRun    bool
 	Workers   int
 }
@@ -106,7 +106,11 @@ func main() {
 	fmt.Printf("Configuration:\n")
 	fmt.Printf("  Source: %s\n", config.SourceDir)
 	fmt.Printf("  Output: %s\n", config.OutputDir)
-	fmt.Printf("  Move files: %t\n", config.Move)
+	if config.Move != "" {
+		fmt.Printf("  Move files to: %s\n", config.Move)
+	} else {
+		fmt.Printf("  Move files: false (updating EXIF in place)\n")
+	}
 	fmt.Printf("  Dry run: %t\n", config.DryRun)
 	fmt.Printf("  Workers: %d\n\n", config.Workers)
 
@@ -150,7 +154,7 @@ func parseFlags() *Config {
 
 	flag.StringVar(&config.SourceDir, "source", "", "Path to the Google Photos Takeout root directory")
 	flag.StringVar(&config.OutputDir, "output", "", "Path to the output directory for cleaned files")
-	flag.BoolVar(&config.Move, "move", false, "Move files to organized directory structure")
+	flag.StringVar(&config.Move, "move", "", "Path to move organized files to (optional)")
 	flag.BoolVar(&config.DryRun, "dry-run", false, "Simulate process without making changes")
 	flag.IntVar(&config.Workers, "workers", 4, "Number of worker goroutines")
 	flag.BoolVar(&showVersion, "version", false, "Show version information")
@@ -159,17 +163,17 @@ func parseFlags() *Config {
 		fmt.Printf("Google Photos Takeout Cleanup Tool v%s\n\n", version)
 		fmt.Printf("Usage: %s [OPTIONS]\n\n", os.Args[0])
 		fmt.Printf("Required flags:\n")
-		fmt.Printf("  -source string    Path to the Google Photos Takeout root directory\n")
-		fmt.Printf("  -output string    Path to the output directory for cleaned files\n\n")
+		fmt.Printf("  -source string    Path to the Google Photos Takeout root directory\n\n")
 		fmt.Printf("Optional flags:\n")
-		fmt.Printf("  -move             Move files to organized directory structure (YYYY/MM/DD)\n")
+		fmt.Printf("  -move string      Path to move organized files to (if omitted, updates EXIF in place)\n")
+		fmt.Printf("  -output string    Path to the output directory for cleaned files (required if -move not used)\n")
 		fmt.Printf("  -dry-run          Simulate process without making changes\n")
 		fmt.Printf("  -workers int      Number of worker goroutines (default 4)\n")
 		fmt.Printf("  -version          Show version information\n")
 		fmt.Printf("  -help             Show this help message\n\n")
 		fmt.Printf("Examples:\n")
 		fmt.Printf("  %s -source ./takeout -output ./cleaned\n", os.Args[0])
-		fmt.Printf("  %s -source ./takeout -output ./organized -move -dry-run\n", os.Args[0])
+		fmt.Printf("  %s -source ./takeout -move ./organized -dry-run\n", os.Args[0])
 		fmt.Printf("  %s -source ./takeout -output ./cleaned -workers 8\n\n", os.Args[0])
 	}
 
@@ -188,8 +192,14 @@ func validateConfig(config *Config) error {
 		return errors.New("source directory is required")
 	}
 
-	if config.OutputDir == "" {
-		return errors.New("output directory is required")
+	// If move is not specified, output directory is required
+	if config.Move == "" && config.OutputDir == "" {
+		return errors.New("either -move or -output directory is required")
+	}
+
+	// If move is specified, use it as the output directory
+	if config.Move != "" {
+		config.OutputDir = config.Move
 	}
 
 	if config.Workers <= 0 {
@@ -201,8 +211,8 @@ func validateConfig(config *Config) error {
 		return fmt.Errorf("source directory does not exist: %s", config.SourceDir)
 	}
 
-	// Create output directory if it doesn't exist (unless dry run)
-	if !config.DryRun {
+	// Create output directory if it doesn't exist (unless dry run) and if moving files
+	if config.Move != "" && !config.DryRun {
 		if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
 			return fmt.Errorf("failed to create output directory: %v", err)
 		}
@@ -370,7 +380,7 @@ func processMediaFile(config *Config, exifTool *ExifToolProcess, file MediaFile)
 			if date, err := parseSidecarDate(sidecarPath); err == nil {
 				creationDate = date
 
-				// Update EXIF tags with sidecar date
+				// Update EXIF tags with sidecar date (always do this when sidecar date found)
 				if err := updateExifDate(config, exifTool, file.Path, creationDate); err != nil {
 					result.Error = fmt.Errorf("failed to update EXIF date: %v", err)
 					return result
@@ -386,8 +396,8 @@ func processMediaFile(config *Config, exifTool *ExifToolProcess, file MediaFile)
 		}
 	}
 
-	// Move file if requested and we have a valid date
-	if config.Move && !creationDate.IsZero() {
+	// Move file if move path is specified and we have a valid date
+	if config.Move != "" && !creationDate.IsZero() {
 		destPath := generateDestinationPath(config.OutputDir, file.BaseName, creationDate)
 
 		if config.DryRun {
@@ -431,8 +441,14 @@ func processMediaFile(config *Config, exifTool *ExifToolProcess, file MediaFile)
 		}
 	}
 
+	// If we're not moving files and haven't already updated from sidecar,
+	// the action was already set above or no action is needed
 	if result.Action == "" {
-		result.Action = "No action needed"
+		if foundExifDate {
+			result.Action = "EXIF date already present"
+		} else {
+			result.Action = "No action needed"
+		}
 	}
 
 	result.Success = true
