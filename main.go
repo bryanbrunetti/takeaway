@@ -105,11 +105,11 @@ func main() {
 	fmt.Printf("===========================================\n\n")
 	fmt.Printf("Configuration:\n")
 	fmt.Printf("  Source: %s\n", config.SourceDir)
-	fmt.Printf("  Output: %s\n", config.OutputDir)
 	if config.Move != "" {
+		fmt.Printf("  Output: %s\n", config.OutputDir)
 		fmt.Printf("  Move files to: %s\n", config.Move)
 	} else {
-		fmt.Printf("  Move files: false (updating EXIF in place)\n")
+		fmt.Printf("  Mode: In-place EXIF updates (no file moving)\n")
 	}
 	fmt.Printf("  Dry run: %t\n", config.DryRun)
 	fmt.Printf("  Workers: %d\n\n", config.Workers)
@@ -166,15 +166,15 @@ func parseFlags() *Config {
 		fmt.Printf("  -source string    Path to the Google Photos Takeout root directory\n\n")
 		fmt.Printf("Optional flags:\n")
 		fmt.Printf("  -move string      Path to move organized files to (if omitted, updates EXIF in place)\n")
-		fmt.Printf("  -output string    Path to the output directory for cleaned files (required if -move not used)\n")
+		fmt.Printf("  -output string    Path to the output directory for cleaned files (optional, only used with -move)\n")
 		fmt.Printf("  -dry-run          Simulate process without making changes\n")
 		fmt.Printf("  -workers int      Number of worker goroutines (default 4)\n")
 		fmt.Printf("  -version          Show version information\n")
 		fmt.Printf("  -help             Show this help message\n\n")
 		fmt.Printf("Examples:\n")
-		fmt.Printf("  %s -source ./takeout -output ./cleaned\n", os.Args[0])
+		fmt.Printf("  %s -source ./takeout\n", os.Args[0])
 		fmt.Printf("  %s -source ./takeout -move ./organized -dry-run\n", os.Args[0])
-		fmt.Printf("  %s -source ./takeout -output ./cleaned -workers 8\n\n", os.Args[0])
+		fmt.Printf("  %s -source ./takeout -workers 8\n\n", os.Args[0])
 	}
 
 	flag.Parse()
@@ -192,14 +192,12 @@ func validateConfig(config *Config) error {
 		return errors.New("source directory is required")
 	}
 
-	// If move is not specified, output directory is required
-	if config.Move == "" && config.OutputDir == "" {
-		return errors.New("either -move or -output directory is required")
-	}
-
 	// If move is specified, use it as the output directory
 	if config.Move != "" {
 		config.OutputDir = config.Move
+	} else if config.OutputDir == "" {
+		// For in-place updates, we don't need an output directory
+		config.OutputDir = config.SourceDir
 	}
 
 	if config.Workers <= 0 {

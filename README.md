@@ -67,7 +67,7 @@ Download the appropriate binary for your platform from the releases section.
 ### Optional Flags
 
 - `-move`: Path to move organized files to (enables date-based organization YYYY/MM/DD)
-- `-output`: Path where cleaned files should be placed (required if -move not used)
+- `-output`: Path where cleaned files should be placed (only used with -move, ignored for in-place updates)
 - `-dry-run`: Simulate the process without making any changes
 - `-workers`: Number of concurrent workers (default: 4)
 
@@ -75,7 +75,7 @@ Download the appropriate binary for your platform from the releases section.
 
 **Update EXIF metadata in place (no file moving):**
 ```bash
-./takeaway-cleanup -source ./Google_Photos_Takeout -output ./Cleaned_Photos
+./takeaway-cleanup -source ./Google_Photos_Takeout
 ```
 
 **Move and organize files by date:**
@@ -90,12 +90,12 @@ Download the appropriate binary for your platform from the releases section.
 
 **High-performance in-place processing:**
 ```bash
-./takeaway-cleanup -source ./Google_Photos_Takeout -output ./Cleaned_Photos -workers 8
+./takeaway-cleanup -source ./Google_Photos_Takeout -workers 8
 ```
 
 ## How It Works
 
-### In-Place Mode (when using `-output`)
+### In-Place Mode (default behavior)
 1. **File Discovery**: Recursively scans the source directory for supported media files
 2. **Metadata Extraction**: Uses ExifTool to read existing EXIF data from each file
 3. **Date Priority Check**: Searches for creation dates in EXIF tags (in priority order)

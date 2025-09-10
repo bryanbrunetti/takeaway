@@ -569,11 +569,13 @@ func TestValidateConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "missing both output and move",
+			name: "in-place mode without output (should work)",
 			config: &Config{
 				SourceDir: ".",
+				Workers:   4,
+				DryRun:    true,
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "invalid workers count",

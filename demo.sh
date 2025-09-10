@@ -122,8 +122,8 @@ fi
 # Demonstrate dry-run mode
 print_header "Dry-Run Mode Demonstration"
 echo -e "${GREEN}Dry-run mode allows you to preview changes without modifying files.${NC}"
-print_subsection "Basic Dry Run"
-run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_basic -dry-run"
+print_subsection "Basic Dry Run (In-place EXIF Updates)"
+run_command "./bin/takeaway-cleanup -source ./test/src -dry-run"
 
 print_subsection "Dry Run with File Organization (Move to Path)"
 run_command "./bin/takeaway-cleanup -source ./test/src -move ./test/demo_organized -dry-run"
@@ -133,13 +133,13 @@ print_header "Worker Pool Configurations"
 echo -e "${GREEN}The application uses configurable worker pools for concurrent processing.${NC}"
 
 print_subsection "Single Worker (Sequential) - In-place EXIF Update"
-run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_single -workers 1 -dry-run"
+run_command "./bin/takeaway-cleanup -source ./test/src -workers 1 -dry-run"
 
 print_subsection "Multiple Workers (Concurrent) - Move to Path"
 run_command "./bin/takeaway-cleanup -source ./test/src -move ./test/demo_multi -workers 4 -dry-run"
 
 print_subsection "High Performance (8 Workers) - In-place Update"
-run_command "./bin/takeaway-cleanup -source ./test/src -output ./test/demo_performance -workers 8 -dry-run"
+run_command "./bin/takeaway-cleanup -source ./test/src -workers 8 -dry-run"
 
 # Test error handling
 print_header "Error Handling Demonstration"
@@ -262,7 +262,7 @@ echo ""
 # Use case examples
 print_header "Common Use Cases"
 echo -e "${GREEN}1. Basic EXIF Cleanup (In-place):${NC}"
-echo "   ./takeaway-cleanup -source /takeout -output /cleaned"
+echo "   ./takeaway-cleanup -source /takeout"
 echo "   → Updates missing EXIF dates in place, preserves original structure"
 echo ""
 echo -e "${GREEN}2. Complete Reorganization:${NC}"
@@ -274,7 +274,7 @@ echo "   ./takeaway-cleanup -source /takeout -move /organized -dry-run"
 echo "   → Shows what would be moved without making changes"
 echo ""
 echo -e "${GREEN}4. Safe Preview (In-place):${NC}"
-echo "   ./takeaway-cleanup -source /takeout -output /cleaned -dry-run"
+echo "   ./takeaway-cleanup -source /takeout -dry-run"
 echo "   → Shows what EXIF dates would be updated in place"
 echo ""
 echo -e "${GREEN}5. High-Performance Processing:${NC}"
